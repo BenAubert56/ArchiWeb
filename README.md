@@ -28,7 +28,14 @@ npm start
 ```
 
 # Lancer MongoDB 
+Se connecter en root
 ```bash
 docker exec -it mongo mongosh -u root -p root --authenticationDatabase admin
+use google-like
+```
+
+Se connecter avec le user pdfuser
+```bash
+docker exec -it mongo mongosh -u pdfuser -p pdfpassword --authenticationDatabase google-like
 use google-like
 ```
