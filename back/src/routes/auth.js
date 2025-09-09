@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { User } from '../models/User.js'
 import { auth } from '../middleware/auth.js'
+import { logAuth } from '../utils/logger.js'
 import { validateRegister, validateLogin } from '../validators/auth.js'
 
 const router = Router()
@@ -23,6 +24,10 @@ router.post('/register', validateRegister, async (req, res) => {
     const u = await User.create({ email, password: hash, name })
     const user = { id: u._id, email: u.email, name: u.name, createdAt: u.createdAt }
     const token = signToken(u._id)
+
+    // --- AJOUT DU LOG DE CREATION ---
+    await logAuth(u._id, 'creation')  // action "creation" pour nouvel utilisateur
+
     return res.status(201).json({ user, token })
   } catch (err) {
     // gestion des erreurs email unique
@@ -43,7 +48,22 @@ router.post('/login', validateLogin, async (req, res) => {
 
   const user = { id: u._id, email: u.email, name: u.name, createdAt: u.createdAt }
   const token = signToken(u._id)
+
+  // --- AJOUT DU LOG DE CONNEXION ---
+  await logAuth(u._id, 'connexion')
+
   return res.json({ user, token })
 })
+
+// POST /api/auth/logout
+router.post('/logout', auth, async (req, res) => {
+  try {
+    await logAuth(req.user.id, 'deconnexion');
+    return res.json({ message: 'Déconnexion enregistrée' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
 
 export default router
