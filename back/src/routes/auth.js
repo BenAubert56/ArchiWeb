@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { User } from '../models/User.js'
 import { logAuth } from '../utils/logger.js'
+import { auth } from '../middleware/auth.js'
 import { validateRegister, validateLogin } from '../validators/auth.js'
 
 const router = Router()
