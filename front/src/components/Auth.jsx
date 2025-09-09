@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 export function Login() {
@@ -6,6 +7,7 @@ export function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const submit = async (e) => {
     e.preventDefault();
@@ -13,9 +15,13 @@ export function Login() {
     setLoading(true);
     try {
       const res = await axios.post("http://localhost:3000/api/auth/login", { email, password });
-      const { token } = res.data;
+      const { token, user } = res.data;
       if (token) localStorage.setItem("token", token);
+      if (user) localStorage.setItem("user", JSON.stringify(user));
+      // notify same-tab listeners so header updates immediately
+      window.dispatchEvent(new Event("auth-changed"));
       alert("Connecté");
+      navigate("/");
     } catch (err) {
       setError(err.response?.data?.message || "Erreur de connexion");
     } finally {
@@ -54,6 +60,8 @@ export function Register() {
     try {
       await axios.post("http://localhost:3000/api/auth/register", { name, email, password });
       alert("Compte créé. Vous pouvez vous connecter.");
+      // Optionally redirect to login page for convenience
+      window.location.href = "/login";
     } catch (err) {
       setError(err.response?.data?.message || "Erreur d'inscription");
     } finally {

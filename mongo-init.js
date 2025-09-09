@@ -10,5 +10,5 @@ db.createUser({
 
 db.createCollection("documents");
 db.createCollection("users");
-db.createCollection("SearchLog");
-db.createCollection("AuthLog");
+db.createCollection("searchlogs");
+db.createCollection("authlogs");

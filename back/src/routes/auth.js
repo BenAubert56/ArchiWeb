@@ -8,9 +8,10 @@ import { validateRegister, validateLogin } from '../validators/auth.js'
 
 const router = Router()
 const TOKEN_TTL = 60 * 60 * 24 * 7 // 7 jours
+const SECRET = process.env.JWT_SECRET || 'dev-secret'
 
 function signToken(userId) {
-  return jwt.sign({}, process.env.JWT_SECRET, { subject: String(userId), expiresIn: TOKEN_TTL })
+  return jwt.sign({}, SECRET, { subject: String(userId), expiresIn: TOKEN_TTL })
 }
 
 // POST /api/auth/register
