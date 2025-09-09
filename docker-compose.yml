@@ -1,19 +1,34 @@
 version: "3.9"
 
 services:
-  minio:
-    image: minio/minio:latest
-    container_name: minio
+  front:
+    container_name: front
+    working_dir: /app
+    image: node:20-alpine
     restart: always
-    command: server --console-address ":9001" http://192.168.1.10/data http://192.168.1.11/data http://192.168.1.12/data http://192.168.1.13/data http://192.168.1.14/data
+    command: sh -c "npm ci && npm run dev"
     ports:
-      - "9000:9000"   # API S3 compatible
-      - "9001:9001"   # Console web
-    environment:
-      MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: admin123
+      - "5173:5173"
     volumes:
-      - "C:/data/documents:/data"
+      - ./front:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+    tty: true
+
+#  minio:
+#    image: minio/minio:latest
+#    container_name: minio
+#    restart: always
+#    command: server --console-address ":9001" http://192.168.1.10/data http://192.168.1.11/data http://192.168.1.12/data http://192.168.1.13/data http://192.168.1.14/data
+#    ports:
+#      - "9000:9000"   # API S3 compatible
+#      - "9001:9001"   # Console web
+#    environment:
+#      MINIO_ROOT_USER: admin
+#      MINIO_ROOT_PASSWORD: admin123
+#    volumes:
+#      - "C:/data/documents:/data"
 
   mongo:
     image: mongo
