@@ -26,3 +26,9 @@ npm install
 ```bash
 npm start
 ```
+
+# Lancer MongoDB 
+```bash
+docker exec -it mongo mongosh -u root -p root --authenticationDatabase admin
+use google-like
+```
