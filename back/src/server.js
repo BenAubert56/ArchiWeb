@@ -8,10 +8,17 @@ import fs from 'fs';
 import path from 'path';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { Client } from '@elastic/elasticsearch';
-import {cacheMiddleware, cacheJSONResponse, bumpCacheVersion, clearCache} from './cache.js';
+import {
+  cacheMiddleware,
+  cacheJSONResponse,
+  bumpCacheVersion,
+  clearCache
+} from './cache.js';
 import { v4 as uuidv4 } from 'uuid';
 import { logSearch, logUpload, logListDocs } from './utils/logger.js';
 import sw from 'stopword';
+import { auth } from './middleware/auth.js';
+import { SearchLog } from './models/Logs.js';
 import crypto from 'crypto';
 
 const app = express();
@@ -19,7 +26,9 @@ app.use(cors());
 app.use(express.json());
 
 // Mongo + auth
-app.get('/', (req, res) => res.json({ ok: true, service: 'Service API' }));
+app.get('/', (req, res) =>
+  res.json({ ok: true, service: 'Service API' })
+);
 app.use('/api/auth', authRoutes);
 
 // ---------- Elasticsearch Cluster Setup ----------
@@ -29,7 +38,7 @@ const client = new Client({
     'http://10.104.126.129:9200',
     'http://10.104.126.60:9200',
     'http://10.104.126.189:9200',
-    'http://10.104.126.67:9200',
+    'http://10.104.126.67:9200'
   ]
 });
 
@@ -42,23 +51,22 @@ if (!fs.existsSync(STORAGE_DIR)) {
 const upload = multer({ dest: 'uploads/' });
 const stopwords = new Set(sw.fra);
 
-// fonction pour extraire les tags en enlevant les pronoms 
+// ---------- Helpers ----------
+
+// fonction pour extraire les tags en enlevant les pronoms
 function extractTags(text, limit = 20) {
-  // Nettoyer le texte et séparer les mots
   const words = text
     .toLowerCase()
-    .replace(/[^a-zàâçéèêëîïôûùüÿñæœ\s]/gi, ' ') // supprimer les caractères spéciaux
+    .replace(/[^a-zàâçéèêëîïôûùüÿñæœ\s]/gi, ' ')
     .split(/\s+/)
     .filter(w => w.length > 2 && !stopwords.has(w));
 
-  // Compter la fréquence d'aparition
   const freq = {};
   for (const w of words) {
     freq[w] = (freq[w] || 0) + 1;
   }
 
   const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
-
   return sorted.slice(0, limit).map(([word]) => word);
 }
 
@@ -90,21 +98,22 @@ async function docExists({ filename, content, author, size, createdAt }) {
     console.log('Doublon détecté via hash');
     return true; // doublon exact
   }
-
   return false;
 }
 
 // ---------- Upload PDF & Index ----------
-app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
-  try {
-    // Générer un nom unique (car tu modifies toujours le filename)
-    const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
-    const storedFilePath = path.join(STORAGE_DIR, uniqueName);
-    fs.renameSync(req.file.path, storedFilePath);
+app.post(
+  '/api/pdfs/upload',
+  auth,
+  upload.single('pdf'),
+  async (req, res) => {
+    try {
+      const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
+      const storedFilePath = path.join(STORAGE_DIR, uniqueName);
+      fs.renameSync(req.file.path, storedFilePath);
 
-    // Extraire le texte du PDF
-    const dataBuffer = fs.readFileSync(storedFilePath);
-    const pdfData = await pdfParse(dataBuffer);
+      const dataBuffer = fs.readFileSync(storedFilePath);
+      const pdfData = await pdfParse(dataBuffer);
 
     // Métadonnées + hash
     const metadata = {
@@ -136,10 +145,10 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
       originalPath: storedFilePath
     };
 
-    const response = await client.index({
-      index: 'pdfs',
-      document: doc
-    });
+      const response = await client.index({
+        index: 'pdfs',
+        document: doc
+      });
 
     await logUpload({
       user: req.user?.id || 'anonymous',
@@ -151,138 +160,147 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
     await client.indices.refresh({ index: 'pdfs' });
     await bumpCacheVersion();
 
-    res.json({ message: 'PDF indexé avec succès', id: response._id, doc });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Erreur lors de l'upload PDF" });
+      res.json({
+        message: 'PDF indexé avec succès',
+        id: response._id,
+        doc
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Erreur lors de l'upload PDF" });
+    }
   }
-});
-
-// Recherche PDF
-app.get('/api/pdfs/search',
-    cacheMiddleware({ ttlSeconds: 86400 }),
-    async (req, res) => {
-  const start = Date.now();
-  try {
-    const { q = '', userId } = req.query;
-    const query = String(q || '').trim();
-    if (!query) {
-      return cacheJSONResponse(req, res, [], { ttlSeconds: 60 });
-    }
-    const result = await client.search({
-      index: 'pdfs',
-      _source: ['filename', 'uploadedAt'],
-      size: 50,
-      query: {
-        bool: {
-          should: [
-            { term: { 'filename.keyword': { value: q, boost: 3 } } },
-            { terms: { 'tags': q.split(' '), boost: 2 } },
-            {
-              multi_match: {
-                query: q,
-                fields: ['content'],
-                type: 'best_fields'
-              }
-            }
-          ]
-        }
-      },
-      highlight: {
-        fields: {
-          content: {
-            fragment_size: 140,
-            number_of_fragments: 10,
-            pre_tags: ['<mark>'],
-            post_tags: ['</mark>'],
-            fragmenter: 'simple' // Meilleur découpage
-          }
-        }
-    }
-    });
-
-        const snippets = [];
-        for (const hit of result.hits.hits) {
-          const id = hit._id;
-          const { filename, uploadedAt } = hit._source || {};
-          const contentFragments = hit.highlight?.content || [];
-
-          const cleanSnippets = contentFragments.map(frag => {
-            // Nettoyage des fragments
-            return frag
-                .replace(/-\s*/g, '')       // Supprime les tirets résiduels
-                .replace(/\s+/g, ' ')       // Normalisation des espaces
-                .trim();                    // Nettoie les espaces inutiles
-          });
-
-          cleanSnippets.forEach(cleanFrag => {
-            snippets.push({
-              id,
-              fileName: filename,
-              uploadedAt,
-              content: cleanFrag
-            });
-          });
-        }
-
-        const duration = Date.now() - start;
-        const hits = result.hits.hits;
-
-        // journalisation de la recherche
-        await logSearch({
-          user: userId || 'anonymous',
-          query: q,
-          results: hits.length,
-          duration
-        });
-
-        return cacheJSONResponse(req, res, snippets, { ttlSeconds: 86400 });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
-      }
-    }
 );
 
+// ---------- Recherche PDF ----------
+app.get(
+  '/api/pdfs/search',
+  auth,
+  cacheMiddleware({ ttlSeconds: 86400 }),
+  async (req, res) => {
+    const start = Date.now();
+    try {
+      const { q = '' } = req.query;
+      const query = String(q || '').trim();
+      if (!query) {
+        return cacheJSONResponse(req, res, [], { ttlSeconds: 60 });
+      }
 
-// Lister tous les PDFs indexés (avec cache)
-app.get('/api/pdfs',
-  cacheMiddleware({ ttlSeconds: 84000 }), // TTL plus long pour le listing
+      const result = await client.search({
+        index: 'pdfs',
+        _source: ['filename', 'uploadedAt'],
+        size: 50,
+        query: {
+          bool: {
+            should: [
+              { term: { 'filename.keyword': { value: q, boost: 3 } } },
+              { terms: { tags: q.split(' '), boost: 2 } },
+              {
+                multi_match: {
+                  query: q,
+                  fields: ['content'],
+                  type: 'best_fields'
+                }
+              }
+            ]
+          }
+        },
+        highlight: {
+          fields: {
+            content: {
+              fragment_size: 140,
+              number_of_fragments: 10,
+              pre_tags: ['<mark>'],
+              post_tags: ['</mark>'],
+              fragmenter: 'simple'
+            }
+          }
+        }
+      });
+
+      const snippets = [];
+      for (const hit of result.hits.hits) {
+        const id = hit._id;
+        const { filename, uploadedAt } = hit._source || {};
+        const contentFragments = hit.highlight?.content || [];
+
+        const cleanSnippets = contentFragments.map(frag =>
+          frag.replace(/-\s*/g, '').replace(/\s+/g, ' ').trim()
+        );
+
+        cleanSnippets.forEach(cleanFrag => {
+          snippets.push({
+            id,
+            fileName: filename,
+            uploadedAt,
+            content: cleanFrag
+          });
+        });
+      }
+
+      const duration = Date.now() - start;
+      const hits = result.hits.hits;
+
+      await logSearch({
+        user: req.user.id,
+        query: q,
+        results: hits.length,
+        duration
+      });
+
+      return cacheJSONResponse(req, res, snippets, { ttlSeconds: 86400 });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
+    }
+  }
+);
+
+// ---------- Lister tous les PDFs indexés ----------
+app.get(
+  '/api/pdfs',
+  auth,
+  cacheMiddleware({ ttlSeconds: 84000 }),
   async (req, res) => {
     try {
       const result = await client.search({
         index: 'pdfs',
         _source: ['filename', 'tags', 'uploadedAt'],
-        size: 1000, // ajuster selon vos besoins
+        size: 1000,
         query: { match_all: {} }
       });
 
       const body = result.hits.hits;
 
       await logListDocs({
-        user: req.user?.id || 'anonymous',
+        user: req.user.id,
         results: body.length
       });
 
       return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: 'Erreur lors de la récupération des PDFs' });
+      res
+        .status(500)
+        .json({ error: 'Erreur lors de la récupération des PDFs' });
     }
   }
 );
 
-app.delete('/api/cache', async (req, res) => {
+app.delete('/api/cache', auth, async (req, res) => {
   try {
     await clearCache();
     res.json({ success: true, message: 'Cache vidé' });
   } catch (err) {
-    res.status(500).json({ success: false, error: `Impossible de vider le cache: ${err}` });
+    res.status(500).json({
+      success: false,
+      error: `Impossible de vider le cache: ${err}`
+    });
   }
 });
 
 // ---------- Télécharger un PDF ----------
-app.get('/api/pdfs/:id/download', async (req, res) => {
+app.get('/api/pdfs/:id/download', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await client.get({ index: 'pdfs', id });
@@ -300,7 +318,7 @@ app.get('/api/pdfs/:id/download', async (req, res) => {
 });
 
 // ---------- Ouvrir un PDF dans le navigateur ----------
-app.get('/api/pdfs/:id/open', async (req, res) => {
+app.get('/api/pdfs/:id/open', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await client.get({ index: 'pdfs', id });
@@ -311,11 +329,37 @@ app.get('/api/pdfs/:id/open', async (req, res) => {
     }
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${filename}"`
+    );
     fs.createReadStream(filePath).pipe(res);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de l’ouverture du PDF' });
+  }
+});
+
+// GET /api/search/suggestions?q=mot
+app.get('/api/pdfs/suggestions', auth, async (req, res) => {
+  try {
+    const user = req.user.id;
+    const { q = '' } = req.query;
+    if (!q || q.length < 1) return res.json([]);
+
+    // Cherche les requêtes de l'utilisateur commençant par q (insensible à la casse)
+    const suggestions = await SearchLog.find({
+      user,
+      query: { $regex: '^' + q, $options: 'i' }
+    })
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .distinct('query');
+
+    res.json(suggestions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des suggestions de recherches' });
   }
 });
 
@@ -329,7 +373,11 @@ app.use((err, req, res, next) => {
 // ---------- Démarrage ----------
 const PORT = process.env.PORT || 3000;
 connectDB(process.env.MONGODB_URI)
-  .then(() => app.listen(PORT, () => console.log(`API sur http://localhost:${PORT}`)))
+  .then(() =>
+    app.listen(PORT, () =>
+      console.log(`API sur http://localhost:${PORT}`)
+    )
+  )
   .catch(err => {
     console.error('Échec connexion BDD', err);
     process.exit(1);
