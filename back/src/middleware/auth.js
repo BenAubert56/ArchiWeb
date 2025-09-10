@@ -1,12 +1,14 @@
 import jwt from 'jsonwebtoken'
 
+const SECRET = process.env.JWT_SECRET || 'dev-secret'
+
 export function auth(req, res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ error: 'Token manquant' })
 
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET)
+    const payload = jwt.verify(token, SECRET)
     req.user = { id: payload.sub }
     next()
   } catch {

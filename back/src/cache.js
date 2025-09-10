@@ -22,7 +22,8 @@ function buildCanonicalKeyFromReq(req, version) {
   const entries = Object.entries(req.query ?? {}).map(([k, v]) => [k, String(v)]);
   entries.sort((a, b) => a[0].localeCompare(b[0]));
   const qs = new URLSearchParams(entries).toString();
-  return `pdfs:v${version}:${route}${qs ? `?${qs}` : ''}`;
+  const userSeg = req.user?.id ? `:u${req.user.id}` : '';
+  return `pdfs:v${version}${userSeg}:${route}${qs ? `?${qs}` : ''}`;
 }
 
 export async function makeCacheKey(req) {
@@ -40,7 +41,8 @@ export function cacheMiddleware({ ttlSeconds = 86400 } = {}) { // 24h dans le ca
       if (!raw) return next();
       const body = JSON.parse(raw);
       res.set('X-Cache', 'HIT');
-      res.set('Cache-Control', `public, max-age=${ttlSeconds}`);
+      res.set('Vary', 'Authorization');
+      res.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
       return res.json(body);
     } catch {
       return next();
@@ -53,7 +55,8 @@ export async function cacheJSONResponse(req, res, body, { ttlSeconds = 86400 } =
   const key = await makeCacheKey(req);
   await redis.setex(key, ttlSeconds, JSON.stringify(body));
   res.set('X-Cache', 'MISS');
-  res.set('Cache-Control', `public, max-age=${ttlSeconds}`);
+  res.set('Vary', 'Authorization');
+  res.set('Cache-Control', 'private, no-store, max-age=0, must-revalidate');
   return res.json(body);
 }
 

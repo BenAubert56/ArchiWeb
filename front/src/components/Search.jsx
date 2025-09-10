@@ -14,7 +14,10 @@ export default function Search() {
     setLoading(true);
     setError("");
     try {
-      const res = await axios.get(`http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}`);
+      const token = localStorage.getItem("token");
+      const res = await axios.get(`http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}`,
+        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
+      );
       // L'API renvoie un tableau à plat de snippets: [{ id, fileName, uploadedAt, content }]
       const data = Array.isArray(res.data) ? res.data : (res.data?.hits ?? []);
       setResults(data);
