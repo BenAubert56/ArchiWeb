@@ -28,3 +28,7 @@ services:
       - 27017:27017
     volumes:
       - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+  redis:
+      image: redis:7
+      ports:
+        - "6379:6379"
