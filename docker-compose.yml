@@ -51,3 +51,8 @@ services:
       - 9300:9300
     volumes:
       - ./data/node1:/usr/share/elasticsearch/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
