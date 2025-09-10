@@ -19,10 +19,14 @@ app.use('/api/auth', authRoutes);
 // ---------- Elasticsearch Cluster Setup ----------
 const client = new Client({
   nodes: [
-    'http://10.111.101.163:9200',
-    'http://10.111.101.160:9200'
+    'http://10.104.126.159:9200',
+    'http://10.104.126.129:9200',
+    'http://10.104.126.60:9200',
+    'http://10.104.126.189:9200',
+    'http://10.104.126.67:9200',
   ]
 });
+
 const upload = multer({ dest: 'uploads/' });
 
 // Upload PDF
@@ -58,6 +62,7 @@ app.get('/api/pdfs/search', async (req, res) => {
     const { q } = req.query;
     const result = await client.search({
       index: 'pdfs',
+       _source: ['filename', 'uploadedAt'],
       query: {
         multi_match: {
           query: q,
@@ -78,6 +83,7 @@ app.get('/api/pdfs', async (req, res) => {
   try {
     const result = await client.search({
       index: 'pdfs',
+      _source: ['filename', 'uploadedAt'],
       size: 1000, // ajuster selon vos besoins
       query: { match_all: {} }
     });
