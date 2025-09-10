@@ -10,7 +10,6 @@ import { Client } from '@elastic/elasticsearch';
 import { cacheMiddleware, cacheJSONResponse, bumpCacheVersion } from './cache.js';
 
 const app = express();
-app.disable('etag');     
 app.use(cors());
 app.use(express.json());
 
@@ -41,7 +40,7 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
       filename: req.file.originalname,
       content: pdfData.text,
       uploadedAt: new Date(),
-      originalPath: req.file.path 
+      originalPath: req.file.path
     };
 
     await client.index({
