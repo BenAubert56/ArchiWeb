@@ -30,7 +30,7 @@ export async function makeCacheKey(req) {
   return buildCanonicalKeyFromReq(req, v);
 }
 
-// Middleware de lecture : si existant dans le cache : renvoie le JSON 
+// Middleware de lecture : si existant dans le cache : renvoie le JSON
 export function cacheMiddleware({ ttlSeconds = 86400 } = {}) { // 24h dans le cache
   return async (req, res, next) => {
     if (req.method !== 'GET') return next();
@@ -55,4 +55,15 @@ export async function cacheJSONResponse(req, res, body, { ttlSeconds = 86400 } =
   res.set('X-Cache', 'MISS');
   res.set('Cache-Control', `public, max-age=${ttlSeconds}`);
   return res.json(body);
+}
+
+// Suppression du cache
+export async function clearCache() {
+  try {
+    // Attention : flushall supprime toutes les clés de Redis
+    await redis.flushall();
+    console.log('✅ Cache vidé avec succès');
+  } catch (err) {
+    console.error('❌ Erreur lors du flush du cache Redis :', err);
+  }
 }

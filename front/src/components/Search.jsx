@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import axios from "axios";
 
 export default function Search() {
@@ -9,17 +9,28 @@ export default function Search() {
 
   const handleSearch = async () => {
     if (!query.trim()) return;
+    // Reset previous results so a new search replaces instead of appearing appended
+    setResults([]);
     setLoading(true);
     setError("");
     try {
-      const res = await axios.get(`http://localhost:3000/search?q=${encodeURIComponent(query)}`);
-      setResults(res.data.hits || res.data || []);
+      const res = await axios.get(`http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}`);
+      // L'API renvoie un tableau à plat de snippets: [{ id, fileName, uploadedAt, content }]
+      const data = Array.isArray(res.data) ? res.data : (res.data?.hits ?? []);
+      setResults(data);
     } catch (e) {
       setError("Erreur lors de la recherche");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!query) {
+      setResults([]);
+      setError("");
+    }
+  }, [query]);
 
   const onKeyDown = (e) => {
     if (e.key === "Enter") handleSearch();
@@ -44,24 +55,28 @@ export default function Search() {
       {error && <div className="text-red-600 mt-3">{error}</div>}
       <ul className="mt-6 space-y-3">
         {results.map((r, idx) => {
-          const id = r.id || r.documentId || r._id || idx;
-          const title = r.fileName || r.title || r.name || r.id || "Document";
-          const page = r.page || r.pageNumber;
+          const id = r.id || idx;
+          const title = r.fileName || "(Sans nom)";
           const link = r.link || r.url || (r.filePath ? `/pdfs/${r.filePath}` : undefined);
           return (
             <li key={id} className="border rounded p-3 bg-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-semibold">{title}</div>
-                  {page !== undefined && <div className="text-sm text-gray-600">Page: {page}</div>}
+                  <div className="font-semibold truncate max-w-[60ch]" title={title}>{title}</div>
+                  <div className="text-xs text-gray-500">{r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : ''}</div>
                 </div>
                 {link && (
-                  <a className="text-blue-600 underline" href={page ? `${link}#page=${page}` : link} target="_blank" rel="noreferrer">
+                  <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
                     Ouvrir
                   </a>
                 )}
               </div>
-              {r.content && <p className="text-sm text-gray-700 mt-2">{String(r.content).slice(0, 150)}...</p>}
+              {r.content && (
+                <p
+                  className="text-sm text-gray-700 mt-2"
+                  dangerouslySetInnerHTML={{ __html: String(r.content) }}
+                />
+              )}
             </li>
           );
         })}

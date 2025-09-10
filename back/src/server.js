@@ -7,7 +7,7 @@ import multer from 'multer';
 import fs from 'fs';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { Client } from '@elastic/elasticsearch';
-import { cacheMiddleware, cacheJSONResponse, bumpCacheVersion } from './cache.js';
+import {cacheMiddleware, cacheJSONResponse, bumpCacheVersion, clearCache} from './cache.js';
 
 const app = express();
 app.use(cors());
@@ -64,28 +64,70 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
 });
 
 // Recherche PDF (avec cache en lecture + écriture)
+// Recherche PDF
 app.get('/api/pdfs/search',
-  cacheMiddleware({ ttlSeconds: 86400 }),
-  async (req, res) => {
-    try {
-      const { q = '' } = req.query;
-      const result = await client.search({
-        index: 'pdfs',
-        _source: ['filename', 'uploadedAt'],
-        query: {
-          multi_match: {
-            query: q,
-            fields: ['filename', 'content']
-          }
+    cacheMiddleware({ ttlSeconds: 86400 }),
+    async (req, res) => {
+      try {
+        const { q = '' } = req.query;
+        const query = String(q || '').trim();
+        if (!query) {
+          return cacheJSONResponse(req, res, [], { ttlSeconds: 60 });
         }
-      });
-      const body = result.hits.hits;
-      return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
+
+        const result = await client.search({
+          index: 'pdfs',
+          _source: ['filename', 'uploadedAt'],
+          size: 50,
+          query: {
+            multi_match: {
+              query,
+              fields: ['filename^2', 'content']
+            }
+          },
+          highlight: {
+            fields: {
+              content: {
+                fragment_size: 140,
+                number_of_fragments: 10,
+                pre_tags: ['<mark>'],
+                post_tags: ['</mark>'],
+                fragmenter: 'simple' // Meilleur découpage
+              }
+            }
+          }
+        });
+
+        const snippets = [];
+        for (const hit of result.hits.hits) {
+          const id = hit._id;
+          const { filename, uploadedAt } = hit._source || {};
+          const contentFragments = hit.highlight?.content || [];
+
+          const cleanSnippets = contentFragments.map(frag => {
+            // Nettoyage des fragments
+            return frag
+                .replace(/-\s*/g, '')       // Supprime les tirets résiduels
+                .replace(/\s+/g, ' ')       // Normalisation des espaces
+                .trim();                    // Nettoie les espaces inutiles
+          });
+
+          cleanSnippets.forEach(cleanFrag => {
+            snippets.push({
+              id,
+              fileName: filename,
+              uploadedAt,
+              content: cleanFrag
+            });
+          });
+        }
+
+        return cacheJSONResponse(req, res, snippets, { ttlSeconds: 86400 });
+      } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
+      }
     }
-  }
 );
 
 // Lister tous les PDFs indexés (avec cache)
@@ -108,6 +150,15 @@ app.get('/api/pdfs',
     }
   }
 );
+
+app.delete('/api/cache', async (req, res) => {
+  try {
+    await clearCache();
+    res.json({ success: true, message: 'Cache vidé' });
+  } catch (err) {
+    res.status(500).json({ success: false, error: `Impossible de vider le cache: ${err}` });
+  }
+});
 
 // ---------- 404 & erreurs ----------
 app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
