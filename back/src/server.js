@@ -18,6 +18,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { logSearch, logUpload, logListDocs } from './utils/logger.js';
 import sw from 'stopword';
 import { auth } from './middleware/auth.js';
+import { SearchLog } from './models/Logs.js';
+import crypto from 'crypto';
 
 const app = express();
 app.use(cors());
@@ -68,26 +70,33 @@ function extractTags(text, limit = 20) {
   return sorted.slice(0, limit).map(([word]) => word);
 }
 
-// Fonction pour vérifier si un document existe déjà
 async function docExists({ filename, content, author, size, createdAt }) {
+  // Générer un hash du contenu texte
+  const contentHash = crypto
+    .createHash('sha256')
+    .update(content)
+    .digest('hex');
+
+  // Rechercher un doc avec le même hash
   const result = await client.search({
     index: 'pdfs',
-    size: 100,
+    size: 1,
     query: {
-      term: { 'filename.keyword': filename }
+      bool: {
+        must: [
+          { term: { contentHash } },
+          { term: { 'author.keyword': author || 'unknown' } },
+          { term: { size } }
+        ],
+        must_not: [
+          // pas besoin de comparer le filename car nom unique
+        ]
+      }
     }
   });
-
-  for (const hit of result.hits.hits) {
-    const doc = hit._source;
-    if (
-      doc.content === content &&
-      doc.author === author &&
-      doc.size === size &&
-      doc.createdAt === createdAt
-    ) {
-      return true;
-    }
+  if (result.hits.hits.length > 0) {
+    console.log('Doublon détecté via hash');
+    return true; // doublon exact
   }
   return false;
 }
@@ -106,43 +115,50 @@ app.post(
       const dataBuffer = fs.readFileSync(storedFilePath);
       const pdfData = await pdfParse(dataBuffer);
 
-      const metadata = {
-        filename: req.file.originalname,
-        content: pdfData.text,
-        author: pdfData.info?.Author || 'unknown',
-        size: req.file.size,
-        createdAt: pdfData.info?.CreationDate || null
-      };
+    // Métadonnées + hash
+    const metadata = {
+      filename: uniqueName,
+      content: pdfData.text,
+      author: pdfData.info?.Author || 'unknown',
+      size: req.file.size,
+      createdAt: pdfData.info?.CreationDate || null
+    };
 
-      const exists = await docExists(metadata);
-      if (exists) {
-        fs.unlinkSync(storedFilePath);
-        return res.status(409).json({ error: 'Fichier déjà indexé' });
-      }
+    const exists = await docExists(metadata);
+    if (exists) {
+      fs.unlinkSync(storedFilePath); // supprimer car doublon
+      return res.status(409).json({ error: 'Fichier déjà indexé' });
+    }
 
-      const tags = extractTags(pdfData.text);
+    const contentHash = crypto
+      .createHash('sha256')
+      .update(pdfData.text)
+      .digest('hex');
 
-      const doc = {
-        ...metadata,
-        tags,
-        uploadedAt: new Date(),
-        filePath: storedFilePath
-      };
+    const tags = extractTags(pdfData.text);
+
+    const doc = {
+      ...metadata,
+      contentHash,
+      tags,
+      uploadedAt: new Date(),
+      originalPath: storedFilePath
+    };
 
       const response = await client.index({
         index: 'pdfs',
         document: doc
       });
 
-      await logUpload({
-        user: req.user.id,
-        filename: req.file.originalname,
-        tags,
-        size: req.file.size
-      });
+    await logUpload({
+      user: req.user?.id || 'anonymous',
+      filename: uniqueName,
+      tags,
+      size: req.file.size
+    });
 
-      await client.indices.refresh({ index: 'pdfs' });
-      await bumpCacheVersion();
+    await client.indices.refresh({ index: 'pdfs' });
+    await bumpCacheVersion();
 
       res.json({
         message: 'PDF indexé avec succès',
@@ -321,6 +337,29 @@ app.get('/api/pdfs/:id/open', auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de l’ouverture du PDF' });
+  }
+});
+
+// GET /api/search/suggestions?q=mot
+app.get('/api/pdfs/suggestions', auth, async (req, res) => {
+  try {
+    const user = req.user.id;
+    const { q = '' } = req.query;
+    if (!q || q.length < 1) return res.json([]);
+
+    // Cherche les requêtes de l'utilisateur commençant par q (insensible à la casse)
+    const suggestions = await SearchLog.find({
+      user,
+      query: { $regex: '^' + q, $options: 'i' }
+    })
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .distinct('query');
+
+    res.json(suggestions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des suggestions de recherches' });
   }
 });
 
