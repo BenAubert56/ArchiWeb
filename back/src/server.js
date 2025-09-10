@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { logSearch, logUpload, logListDocs } from './utils/logger.js';
 import sw from 'stopword';
 import { auth } from './middleware/auth.js';
+import { SearchLog } from './models/Logs.js';
 
 const app = express();
 app.use(cors());
@@ -321,6 +322,29 @@ app.get('/api/pdfs/:id/open', auth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de l’ouverture du PDF' });
+  }
+});
+
+// GET /api/search/suggestions?q=mot
+app.get('/api/pdfs/suggestions', auth, async (req, res) => {
+  try {
+    const user = req.user.id;
+    const { q = '' } = req.query;
+    if (!q || q.length < 1) return res.json([]);
+
+    // Cherche les requêtes de l'utilisateur commençant par q (insensible à la casse)
+    const suggestions = await SearchLog.find({
+      user,
+      query: { $regex: '^' + q, $options: 'i' }
+    })
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .distinct('query');
+
+    res.json(suggestions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des suggestions de recherches' });
   }
 });
 
