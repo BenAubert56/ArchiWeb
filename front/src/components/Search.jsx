@@ -6,21 +6,40 @@ export default function Search() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [duration, setDuration] = useState(0);
 
-  const handleSearch = async () => {
+  const fetchSearch = async (pageToLoad = 1) => {
     if (!query.trim()) return;
-    // Reset previous results so a new search replaces instead of appearing appended
-    setResults([]);
     setLoading(true);
     setError("");
     try {
       const token = localStorage.getItem("token");
-      const res = await axios.get(`http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}`,
-        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
-      );
-      // L'API renvoie un tableau à plat de snippets: [{ id, fileName, uploadedAt, content }]
-      const data = Array.isArray(res.data) ? res.data : (res.data?.hits ?? []);
-      setResults(data);
+      const url = `http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}&page=${pageToLoad}`;
+      const res = await axios.get(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
+      const data = res.data;
+      if (Array.isArray(data)) {
+        // Legacy shape: array of items only
+        setResults(data);
+        setTotal(data.length);
+        setTotalPages(1);
+        setDuration(0);
+        setPage(pageToLoad);
+      } else {
+        const hits = Array.isArray(data?.hits) ? data.hits : [];
+        setResults(hits);
+        const respTotal = Number(data?.total ?? hits.length);
+        const computedPages = respTotal > 0 ? Math.ceil(respTotal / 20) : 0;
+        const serverPages = Number(data?.totalPages ?? 0);
+        const respTotalPages = Math.max(serverPages, computedPages);
+        setTotal(respTotal);
+        setTotalPages(respTotalPages);
+        setDuration(Number(data?.duration ?? 0));
+        // prefer server-reported page if present
+        setPage(Number(data?.page ?? pageToLoad));
+      }
     } catch (e) {
       setError("Erreur lors de la recherche");
     } finally {
@@ -28,16 +47,30 @@ export default function Search() {
     }
   };
 
+  const handleSearch = async () => {
+    if (!query.trim()) return;
+    // New search resets to first page
+    setResults([]);
+    setPage(1);
+    await fetchSearch(1);
+  };
+
   useEffect(() => {
     if (!query) {
       setResults([]);
       setError("");
+      setTotal(0);
+      setTotalPages(0);
+      setPage(1);
     }
   }, [query]);
 
   const onKeyDown = (e) => {
     if (e.key === "Enter") handleSearch();
   };
+
+  const canPrev = page > 1;
+  const canNext = totalPages > 0 && page < totalPages;
 
   return (
     <div className="p-6">
@@ -56,7 +89,14 @@ export default function Search() {
         </button>
       </div>
       {error && <div className="text-red-600 mt-3">{error}</div>}
-      <ul className="mt-6 space-y-3">
+
+      {(total > 0 || totalPages > 0) && (
+        <div className="mt-4 text-sm text-gray-700">
+          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''}{Number.isFinite(duration) && duration > 0 ? ` — ${duration} ms` : ''}
+        </div>
+      )}
+
+      <ul className="mt-4 space-y-3">
         {results.map((r, idx) => {
           const id = r.id || idx;
           const title = r.fileName || "(Sans nom)";
@@ -85,6 +125,26 @@ export default function Search() {
         })}
         {!loading && results.length === 0 && query && <div>Aucun résultat</div>}
       </ul>
+
+      {totalPages > 1 && (
+        <div className="flex items-center gap-2 mt-6">
+          <button
+            className="px-3 py-1 border rounded disabled:opacity-50"
+            disabled={!canPrev || loading}
+            onClick={() => fetchSearch(page - 1)}
+          >
+            Précédent
+          </button>
+          <span className="text-sm">Page {page} / {totalPages}</span>
+          <button
+            className="px-3 py-1 border rounded disabled:opacity-50"
+            disabled={!canNext || loading}
+            onClick={() => fetchSearch(page + 1)}
+          >
+            Suivant
+          </button>
+        </div>
+      )}
     </div>
   );
 }
