@@ -39,9 +39,6 @@ function AppInner() {
   });
   const navigate = useNavigate();
 
-  // Keep isAuthed and user in sync:
-  // - if other tabs change localStorage (storage event)
-  // - if this tab changes auth (custom 'auth-changed' event)
   useEffect(() => {
     const syncFromStorage = () => {
       setIsAuthed(!!localStorage.getItem("token"));
@@ -68,11 +65,9 @@ function AppInner() {
         });
       }
     } catch (e) {
-      // ignore server errors for logout; still clear client token
     } finally {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
-      // notify same-tab listeners
       window.dispatchEvent(new Event("auth-changed"));
       setUser(null);
       setIsAuthed(false);
