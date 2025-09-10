@@ -10,6 +10,7 @@ import { Client } from '@elastic/elasticsearch';
 import { cacheMiddleware, cacheJSONResponse, bumpCacheVersion } from './cache.js';
 
 const app = express();
+app.disable('etag');     
 app.use(cors());
 app.use(express.json());
 
@@ -65,7 +66,7 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
 
 // Recherche PDF (avec cache en lecture + écriture)
 app.get('/api/pdfs/search',
-  cacheMiddleware({ ttlSeconds: 120 }),
+  cacheMiddleware({ ttlSeconds: 86400 }),
   async (req, res) => {
     try {
       const { q = '' } = req.query;
@@ -79,9 +80,8 @@ app.get('/api/pdfs/search',
           }
         }
       });
-
       const body = result.hits.hits;
-      return cacheJSONResponse(req, res, body, { ttlSeconds: 120 });
+      return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
@@ -91,7 +91,7 @@ app.get('/api/pdfs/search',
 
 // Lister tous les PDFs indexés (avec cache)
 app.get('/api/pdfs',
-  cacheMiddleware({ ttlSeconds: 300 }), // TTL plus long pour le listing
+  cacheMiddleware({ ttlSeconds: 84000 }), // TTL plus long pour le listing
   async (req, res) => {
     try {
       const result = await client.search({
@@ -102,7 +102,7 @@ app.get('/api/pdfs',
       });
 
       const body = result.hits.hits;
-      return cacheJSONResponse(req, res, body, { ttlSeconds: 300 });
+      return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Erreur lors de la récupération des PDFs' });
