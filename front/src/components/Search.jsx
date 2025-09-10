@@ -92,7 +92,7 @@ export default function Search() {
 
       {(total > 0 || totalPages > 0) && (
         <div className="mt-4 text-sm text-gray-700">
-          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''}{Number.isFinite(duration) && duration > 0 ? ` — ${duration} ms` : ''}
+          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''}
         </div>
       )}
 
