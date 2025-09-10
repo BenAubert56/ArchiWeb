@@ -7,6 +7,7 @@ import multer from 'multer';
 import fs from 'fs';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { Client } from '@elastic/elasticsearch';
+import { cacheMiddleware, cacheJSONResponse, bumpCacheVersion } from './cache.js';
 
 const app = express();
 app.use(cors());
@@ -39,7 +40,7 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
       filename: req.file.originalname,
       content: pdfData.text,
       uploadedAt: new Date(),
-      originalPath: req.file.path // chemin temporaire, à adapter si stockage central
+      originalPath: req.file.path 
     };
 
     await client.index({
@@ -47,7 +48,13 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
       document: doc
     });
 
+    // Rendre la doc immédiatement cherchable
+    await client.indices.refresh({ index: 'pdfs' });
+
     fs.unlinkSync(req.file.path);
+
+    // invalidation du cache
+    await bumpCacheVersion();
 
     res.json({ message: 'PDF indexé avec succès', doc });
   } catch (err) {
@@ -56,44 +63,52 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// Recherche PDF
-app.get('/api/pdfs/search', async (req, res) => {
-  try {
-    const { q } = req.query;
-    const result = await client.search({
-      index: 'pdfs',
-       _source: ['filename', 'uploadedAt'],
-      query: {
-        multi_match: {
-          query: q,
-          fields: ['filename', 'content']
+// Recherche PDF (avec cache en lecture + écriture)
+app.get('/api/pdfs/search',
+  cacheMiddleware({ ttlSeconds: 120 }),
+  async (req, res) => {
+    try {
+      const { q = '' } = req.query;
+      const result = await client.search({
+        index: 'pdfs',
+        _source: ['filename', 'uploadedAt'],
+        query: {
+          multi_match: {
+            query: q,
+            fields: ['filename', 'content']
+          }
         }
-      }
-    });
+      });
 
-    res.json(result.hits.hits);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
+      const body = result.hits.hits;
+      return cacheJSONResponse(req, res, body, { ttlSeconds: 120 });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
+    }
   }
-});
+);
 
-// Lister tous les PDFs indexés
-app.get('/api/pdfs', async (req, res) => {
-  try {
-    const result = await client.search({
-      index: 'pdfs',
-      _source: ['filename', 'uploadedAt'],
-      size: 1000, // ajuster selon vos besoins
-      query: { match_all: {} }
-    });
+// Lister tous les PDFs indexés (avec cache)
+app.get('/api/pdfs',
+  cacheMiddleware({ ttlSeconds: 300 }), // TTL plus long pour le listing
+  async (req, res) => {
+    try {
+      const result = await client.search({
+        index: 'pdfs',
+        _source: ['filename', 'uploadedAt'],
+        size: 1000, // ajuster selon vos besoins
+        query: { match_all: {} }
+      });
 
-    res.json(result.hits.hits);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la récupération des PDFs' });
+      const body = result.hits.hits;
+      return cacheJSONResponse(req, res, body, { ttlSeconds: 300 });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erreur lors de la récupération des PDFs' });
+    }
   }
-});
+);
 
 // ---------- 404 & erreurs ----------
 app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
