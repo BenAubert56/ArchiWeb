@@ -12,6 +12,7 @@ import {cacheMiddleware, cacheJSONResponse, bumpCacheVersion, clearCache} from '
 import { v4 as uuidv4 } from 'uuid';
 import { logSearch, logUpload, logListDocs } from './utils/logger.js';
 import sw from 'stopword';
+import crypto from 'crypto';
 
 const app = express();
 app.use(cors());
@@ -61,29 +62,33 @@ function extractTags(text, limit = 20) {
   return sorted.slice(0, limit).map(([word]) => word);
 }
 
-// Fonction pour vérifier si un document existe déjà
 async function docExists({ filename, content, author, size, createdAt }) {
-  // récupérer tous les docs avec le même filename
+  // Générer un hash du contenu texte
+  const contentHash = crypto
+    .createHash('sha256')
+    .update(content)
+    .digest('hex');
+
+  // Rechercher un doc avec le même hash
   const result = await client.search({
     index: 'pdfs',
-    size: 100, // ajuster selon le nombre de fichiers avec le même nom
+    size: 1,
     query: {
-      term: { 'filename.keyword': filename }
+      bool: {
+        must: [
+          { term: { contentHash } },
+          { term: { 'author.keyword': author || 'unknown' } },
+          { term: { size } }
+        ],
+        must_not: [
+          // pas besoin de comparer le filename car nom unique
+        ]
+      }
     }
   });
-
-  // comparer côté Node.js
-  for (const hit of result.hits.hits) {
-    const doc = hit._source;
-
-    if (
-      doc.content === content &&
-      doc.author === author &&
-      doc.size === size &&
-      doc.createdAt === createdAt
-    ) {
-      return true;
-    }
+  if (result.hits.hits.length > 0) {
+    console.log('Doublon détecté via hash');
+    return true; // doublon exact
   }
 
   return false;
@@ -92,7 +97,7 @@ async function docExists({ filename, content, author, size, createdAt }) {
 // ---------- Upload PDF & Index ----------
 app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
   try {
-    // Générer un nom unique pour le fichier
+    // Générer un nom unique (car tu modifies toujours le filename)
     const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
     const storedFilePath = path.join(STORAGE_DIR, uniqueName);
     fs.renameSync(req.file.path, storedFilePath);
@@ -101,27 +106,31 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
     const dataBuffer = fs.readFileSync(storedFilePath);
     const pdfData = await pdfParse(dataBuffer);
 
+    // Métadonnées + hash
     const metadata = {
-      filename: req.file.originalname,
+      filename: uniqueName,
       content: pdfData.text,
       author: pdfData.info?.Author || 'unknown',
       size: req.file.size,
       createdAt: pdfData.info?.CreationDate || null
     };
 
-    // Vérifier via docExists
     const exists = await docExists(metadata);
     if (exists) {
-      fs.unlinkSync(req.file.path);
+      fs.unlinkSync(storedFilePath); // supprimer car doublon
       return res.status(409).json({ error: 'Fichier déjà indexé' });
     }
 
-    // Extraction des tags
+    const contentHash = crypto
+      .createHash('sha256')
+      .update(pdfData.text)
+      .digest('hex');
+
     const tags = extractTags(pdfData.text);
-    
-    // sinon indexer le document
+
     const doc = {
       ...metadata,
+      contentHash,
       tags,
       uploadedAt: new Date(),
       originalPath: storedFilePath
@@ -132,26 +141,14 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
       document: doc
     });
 
-    // Log de l’upload
     await logUpload({
       user: req.user?.id || 'anonymous',
-      filename: req.file.originalname,
+      filename: uniqueName,
       tags,
       size: req.file.size
     });
 
-    // Log de l’upload
-    await logUpload({
-      user: req.user?.id || 'anonymous',
-      filename: req.file.originalname,
-      tags,
-      size: req.file.size
-    });
-
-    // Rafraîchir l'index pour que le document soit immédiatement cherchable
     await client.indices.refresh({ index: 'pdfs' });
-
-    // Invalidation du cache
     await bumpCacheVersion();
 
     res.json({ message: 'PDF indexé avec succès', id: response._id, doc });
@@ -161,11 +158,11 @@ app.post('/api/pdfs/upload', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// Recherche PDF (avec cache en lecture + écriture)
 // Recherche PDF
 app.get('/api/pdfs/search',
     cacheMiddleware({ ttlSeconds: 86400 }),
     async (req, res) => {
+  const start = Date.now();
   try {
     const { q = '', userId } = req.query;
     const query = String(q || '').trim();
