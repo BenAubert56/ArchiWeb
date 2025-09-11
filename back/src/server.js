@@ -26,13 +26,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Mongo + auth
-app.get('/', (req, res) =>
-  res.json({ ok: true, service: 'Service API' })
-);
+// Health
+app.get('/', (req, res) => res.json({ ok: true, service: 'Service API' }));
 app.use('/api/auth', authRoutes);
 
-// ---------- Elasticsearch Cluster Setup ----------
+// ---------- Elasticsearch ----------
 const client = new Client({
   nodes: [
     'http://10.104.126.159:9200',
@@ -43,18 +41,14 @@ const client = new Client({
   ]
 });
 
-// Dossier de stockage permanent
+// Storage
 const STORAGE_DIR = path.join(process.cwd(), 'stored_pdfs');
-if (!fs.existsSync(STORAGE_DIR)) {
-  fs.mkdirSync(STORAGE_DIR);
-}
+if (!fs.existsSync(STORAGE_DIR)) fs.mkdirSync(STORAGE_DIR);
 
 const upload = multer({ dest: 'uploads/' });
 const stopwords = new Set(sw.fra);
 
 // ---------- Helpers ----------
-
-// fonction pour extraire les tags en enlevant les pronoms
 function extractTags(text, limit = 20) {
   const words = text
     .toLowerCase()
@@ -63,22 +57,16 @@ function extractTags(text, limit = 20) {
     .filter(w => w.length > 2 && !stopwords.has(w));
 
   const freq = {};
-  for (const w of words) {
-    freq[w] = (freq[w] || 0) + 1;
-  }
+  for (const w of words) freq[w] = (freq[w] || 0) + 1;
 
-  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
-  return sorted.slice(0, limit).map(([word]) => word);
+  return Object.entries(freq)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([word]) => word);
 }
 
-async function docExists({ filename, originalName, content, author, size, createdAt }) {
-  // Générer un hash du contenu texte
-  const contentHash = crypto
-    .createHash('sha256')
-    .update(content)
-    .digest('hex');
-
-  // Rechercher un doc avec le même hash
+async function docExists({ content, author, size }) {
+  const contentHash = crypto.createHash('sha256').update(content).digest('hex');
   const result = await client.search({
     index: 'pdfs',
     size: 1,
@@ -88,102 +76,80 @@ async function docExists({ filename, originalName, content, author, size, create
           { term: { contentHash } },
           { term: { 'author.keyword': author || 'unknown' } },
           { term: { size } }
-        ],
-        must_not: [
-          // pas besoin de comparer le filename car nom unique
         ]
       }
     }
   });
   if (result.hits.hits.length > 0) {
     console.log('Doublon détecté via hash');
-    return true; // doublon exact
+    return true;
   }
   return false;
 }
 
-// ---------- Upload PDF & Index ----------
-app.post(
-  '/api/pdfs/upload',
-  auth,
-  upload.single('pdf'),
-  async (req, res) => {
-    try {
-      const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
-      const storedFilePath = path.join(STORAGE_DIR, uniqueName);
-      fs.renameSync(req.file.path, storedFilePath);
+// ---------- Upload + index ----------
+app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
+  try {
+    const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
+    const storedFilePath = path.join(STORAGE_DIR, uniqueName);
+    fs.renameSync(req.file.path, storedFilePath);
 
-      const dataBuffer = fs.readFileSync(storedFilePath);
-      const pdfData = await pdfParse(dataBuffer);
+    const dataBuffer = fs.readFileSync(storedFilePath);
+    const pdfData = await pdfParse(dataBuffer);
 
-      // Métadonnées + hash
-      const metadata = {
-        filename: uniqueName,
-        originalName: req.file.originalname,
-        content: pdfData.text,
-        author: pdfData.info?.Author || 'unknown',
-        size: req.file.size,
-        createdAt: pdfData.info?.CreationDate || null
-      };
+    const metadata = {
+      filename: uniqueName,
+      originalName: req.file.originalname,
+      content: pdfData.text,
+      author: pdfData.info?.Author || 'unknown',
+      size: req.file.size,
+      createdAt: pdfData.info?.CreationDate || null
+    };
 
-      const exists = await docExists(metadata);
-      if (exists) {
-        fs.unlinkSync(storedFilePath); // supprimer car doublon
-        return res.status(409).json({ error: 'Fichier déjà indexé' });
-      }
-
-      const contentHash = crypto
-        .createHash('sha256')
-        .update(pdfData.text)
-        .digest('hex');
-
-      const tags = extractTags(pdfData.text);
-
-      const pages = await extractPagesText(storedFilePath);
-
-      const doc = {
-        ...metadata,
-        contentHash,
-        tags,
-        pages,
-        uploadedAt: new Date(),
-        originalPath: storedFilePath
-      };
-
-      const response = await client.index({
-        index: 'pdfs',
-        document: doc
-      });
-
-      await logUpload({
-        user: req.user?.id || 'anonymous',
-        filename: uniqueName,
-        originalName: req.file.originalname,
-        tags,
-        size: req.file.size
-      });
-
-      await client.indices.refresh({ index: 'pdfs' });
-      await bumpCacheVersion();
-
-      res.json({
-        message: 'PDF indexé avec succès',
-        id: response._id,
-        doc
-      });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Erreur lors de l'upload PDF" });
+    if (await docExists(metadata)) {
+      fs.unlinkSync(storedFilePath);
+      return res.status(409).json({ error: 'Fichier déjà indexé' });
     }
-  }
-);
 
-// ---------- Recherche PDF ----------
-app.get("/api/pdfs/search", auth, async (req, res) => {
+    const contentHash = crypto.createHash('sha256').update(pdfData.text).digest('hex');
+    const tags = extractTags(pdfData.text);
+    const pages = await extractPagesText(storedFilePath);
+
+    const doc = {
+      ...metadata,
+      contentHash,
+      tags,
+      pages,
+      uploadedAt: new Date(),
+      originalPath: storedFilePath
+    };
+
+    const response = await client.index({ index: 'pdfs', document: doc });
+
+    await logUpload({
+      user: req.user?.id || 'anonymous',
+      filename: uniqueName,
+      originalName: req.file.originalname,
+      tags,
+      size: req.file.size
+    });
+
+    await client.indices.refresh({ index: 'pdfs' });
+    await bumpCacheVersion();
+
+    res.json({ message: 'PDF indexé avec succès', id: response._id, doc });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de l'upload PDF" });
+  }
+});
+
+// ---------- Search ----------
+app.get('/api/pdfs/search', auth, async (req, res) => {
   const start = Date.now();
   try {
-    const { q = "", page: pageStr } = req.query;
-    const query = String(q || "").trim();
+    const { q = '', page: pageStr } = req.query;
+    const query = String(q || '').trim();
     const FIXED_PAGE_SIZE = 20;
 
     if (!query) {
@@ -200,30 +166,30 @@ app.get("/api/pdfs/search", auth, async (req, res) => {
     const from = (page - 1) * pageSize;
 
     const result = await client.search({
-      index: "pdfs",
-      _source: ["filename", "uploadedAt", "originalName"], // <-- inclut filename
+      index: 'pdfs',
+      _source: ['filename', 'originalName', 'uploadedAt'],
       from,
       size: pageSize,
       track_total_hits: true,
       query: {
         bool: {
           should: [
-            { term: { "originalName.keyword": { value: q, boost: 3 } } },
+            { term: { 'originalName.keyword': { value: q, boost: 3 } } },
             { terms: { tags: q.split(/\s+/) } },
             {
               nested: {
-                path: "pages",
-                query: { match: { "pages.text": { query, operator: "and" } } },
+                path: 'pages',
+                query: { match: { 'pages.text': { query, operator: 'and' } } },
                 inner_hits: {
-                  name: "pages_matching",
-                  _source: ["pageNumber"],
+                  name: 'pages_matching',
+                  _source: ['pageNumber'],
                   highlight: {
                     fields: {
-                      "pages.text": {
+                      'pages.text': {
                         fragment_size: 140,
                         number_of_fragments: 3,
-                        pre_tags: ["<mark>"],
-                        post_tags: ["</mark>"]
+                        pre_tags: ['<mark>'],
+                        post_tags: ['</mark>']
                       }
                     }
                   }
@@ -239,34 +205,31 @@ app.get("/api/pdfs/search", auth, async (req, res) => {
     for (const hit of result.hits.hits) {
       const id = hit._id;
       const src = hit._source || {};
-      const fileName = src.filename ?? null;         // <-- mapping filename -> fileName
+      const originalName = src.originalName ?? src.filename ?? null;
+      const fileName = src.filename ?? src.originalName ?? null; // expose les deux
       const uploadedAt = src.uploadedAt ?? null;
 
       let pageNumber = null;
-      let snippet = "";
+      let snippet = '';
 
       const inner = hit.inner_hits?.pages_matching?.hits?.hits ?? [];
       if (inner.length > 0) {
-        pageNumber = inner[0]._source?.pageNumber;
-        snippet = inner[0].highlight?.["pages.text"]?.[0] ?? "";
+        pageNumber = inner[0]._source?.pageNumber ?? null;
+        snippet = inner[0].highlight?.['pages.text']?.[0] ?? '';
       }
 
-      items.push({ id, fileName, uploadedAt, snippet, pageNumber });
+      items.push({ id, fileName, originalName, uploadedAt, snippet, pageNumber });
     }
 
-    const total = typeof result.hits.total === "number"
-      ? result.hits.total
-      : (result.hits.total?.value ?? items.length);
+    const total =
+      typeof result.hits.total === 'number'
+        ? result.hits.total
+        : result.hits.total?.value ?? items.length;
 
     const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
     const duration = Date.now() - start;
 
-    await logSearch({
-      user: req.user.id,
-      query,
-      results: items.length,
-      duration
-    });
+    await logSearch({ user: req.user.id, query, results: items.length, duration });
 
     return cacheJSONResponse(
       req,
@@ -276,63 +239,49 @@ app.get("/api/pdfs/search", auth, async (req, res) => {
     );
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Erreur lors de la recherche PDF" });
+    res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
   }
 });
 
-// ---------- Lister tous les PDFs indexés ----------
-app.get(
-  '/api/pdfs',
-  auth,
-  cacheMiddleware({ ttlSeconds: 84000 }),
-  async (req, res) => {
-    try {
-      const result = await client.search({
-        index: 'pdfs',
-        _source: ['filename', 'tags', 'uploadedAt'],
-        size: 1000,
-        query: { match_all: {} }
-      });
+// ---------- List all ----------
+app.get('/api/pdfs', auth, cacheMiddleware({ ttlSeconds: 84000 }), async (req, res) => {
+  try {
+    const result = await client.search({
+      index: 'pdfs',
+      _source: ['filename', 'tags', 'uploadedAt'],
+      size: 1000,
+      query: { match_all: {} }
+    });
 
-      const body = result.hits.hits;
+    const body = result.hits.hits;
 
-      await logListDocs({
-        user: req.user.id,
-        results: body.length
-      });
+    await logListDocs({ user: req.user.id, results: body.length });
 
-      return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
-    } catch (err) {
-      console.error(err);
-      res
-        .status(500)
-        .json({ error: 'Erreur lors de la récupération des PDFs' });
-    }
+    return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des PDFs' });
   }
-);
+});
 
-app.delete('/api/cache', auth, async (req, res) => {
+// ---------- Cache ----------
+app.delete('/api/cache', auth, async (_req, res) => {
   try {
     await clearCache();
     res.json({ success: true, message: 'Cache vidé' });
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: `Impossible de vider le cache: ${err}`
-    });
+    res.status(500).json({ success: false, error: `Impossible de vider le cache: ${err}` });
   }
 });
 
-// ---------- Télécharger un PDF ----------
+// ---------- Download/Open ----------
 app.get('/api/pdfs/:id/download', auth, async (req, res) => {
   try {
     const { id } = req.params;
     const result = await client.get({ index: 'pdfs', id });
 
     const { filePath, originalName } = result._source;
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'Fichier introuvable' });
-    }
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Fichier introuvable' });
 
     res.download(filePath, originalName);
   } catch (err) {
@@ -347,9 +296,7 @@ app.get('/api/pdfs/:id/open', auth, async (req, res) => {
     const result = await client.get({ index: 'pdfs', id });
 
     const { originalPath, filename } = result._source;
-    if (!fs.existsSync(originalPath)) {
-      return res.status(404).json({ error: 'Fichier introuvable' });
-    }
+    if (!fs.existsSync(originalPath)) return res.status(404).json({ error: 'Fichier introuvable' });
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
@@ -359,18 +306,17 @@ app.get('/api/pdfs/:id/open', auth, async (req, res) => {
       return res.status(404).json({ error: 'Document non trouvé' });
     }
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de l’ouverture du PDF' });
+    res.status(500).json({ error: "Erreur lors de l’ouverture du PDF" });
   }
 });
 
-// GET /api/search/suggestions?q=mot
+// ---------- Suggestions ----------
 app.get('/api/pdfs/suggestions', auth, async (req, res) => {
   try {
     const user = req.user.id;
     const { q = '' } = req.query;
     if (!q || q.length < 1) return res.json([]);
 
-    // Cherche les requêtes de l'utilisateur commençant par q (insensible à la casse)
     const suggestions = await SearchLog.find({
       user,
       query: { $regex: '^' + q, $options: 'i' }
@@ -386,44 +332,33 @@ app.get('/api/pdfs/suggestions', auth, async (req, res) => {
   }
 });
 
-// ---------- Supprimer tous les PDFs, index et cache (sans auth) ----------
-app.delete('/api/reset-all', async (req, res) => {
+// ---------- Reset all (no auth) ----------
+app.delete('/api/reset-all', async (_req, res) => {
   try {
     const files = fs.readdirSync(STORAGE_DIR);
-    for (const file of files) {
-      fs.unlinkSync(path.join(STORAGE_DIR, file));
-    }
+    for (const file of files) fs.unlinkSync(path.join(STORAGE_DIR, file));
 
     const indexExists = await client.indices.exists({ index: 'pdfs' });
-    if (indexExists) {
-      await client.indices.delete({ index: 'pdfs' });
-    }
+    if (indexExists) await client.indices.delete({ index: 'pdfs' });
 
     await client.indices.create({ index: 'pdfs' });
-
     await clearCache();
 
-    res.json({
-      success: true,
-      message: 'Tous les fichiers, index et cache ont été supprimés'
-    });
+    res.json({ success: true, message: 'Tous les fichiers, index et cache ont été supprimés' });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      success: false,
-      error: `Erreur lors de la réinitialisation: ${err.message}`
-    });
+    res.status(500).json({ success: false, error: `Erreur lors de la réinitialisation: ${err.message}` });
   }
 });
 
-// ---------- 404 & erreurs ----------
+// ---------- 404 & errors ----------
 app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
-app.use((err, req, res, next) => {
+app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ error: 'Erreur serveur' });
 });
 
-// ---------- Démarrage ----------
+// ---------- Boot ----------
 if (process.env.NODE_ENV !== 'test') {
   const PORT = process.env.PORT || 3000;
   connectDB(process.env.MONGODB_URI)
@@ -431,7 +366,6 @@ if (process.env.NODE_ENV !== 'test') {
       app.listen(PORT, async () => {
         console.log(`API sur http://localhost:${PORT}`);
         try {
-          // Invalide les anciennes entrées de cache
           await bumpCacheVersion();
           console.log('Cache version bumped on startup');
         } catch (e) {
