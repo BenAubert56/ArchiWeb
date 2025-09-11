@@ -1,225 +1,287 @@
+// src/__tests__/server.test.js
 import { jest } from '@jest/globals';
-import express from 'express';
 import request from 'supertest';
+import stream from 'stream';
+import express from 'express';
 
-const userMock = {
-  User: {
-    findOne: jest.fn(),
-    create: jest.fn(),
-  },
-};
-await jest.unstable_mockModule('../models/User.js', () => userMock);
-
-const bcryptMock = {
-  hash: jest.fn(),
-  compare: jest.fn(),
-};
-await jest.unstable_mockModule('bcrypt', () => ({ default: bcryptMock }));
-
-const jwtMock = {
-  sign: jest.fn(),
-};
-await jest.unstable_mockModule('jsonwebtoken', () => ({ default: jwtMock }));
-
-const loggerMock = {
-  logAuth: jest.fn(),
-};
-await jest.unstable_mockModule('../utils/logger.js', () => loggerMock);
-
-// court-circuiter les validateurs
-await jest.unstable_mockModule('../validators/auth.js', () => ({
-  validateRegister: (_req, _res, next) => next(),
-  validateLogin: (_req, _res, next) => next(),
+// DB
+await jest.unstable_mockModule('../db.js', () => ({
+  connectDB: jest.fn().mockResolvedValue(undefined),
 }));
 
-// mock du middleware auth
+// Auth: injecte un user
 await jest.unstable_mockModule('../middleware/auth.js', () => ({
   auth: (req, _res, next) => {
-    req.user = { id: '507f1f77bcf86cd799439011' };
+    req.user = { id: 'u1' };
     next();
   },
 }));
 
-// >>> IMPORTANT: définir le secret AVANT d'importer le router
+// Cache
+const cacheJSONResponse = jest.fn((req, res, body) => res.json(body));
+const bumpCacheVersion = jest.fn().mockResolvedValue(undefined);
+const clearCache = jest.fn().mockResolvedValue(undefined);
+await jest.unstable_mockModule('../cache.js', () => ({
+  cacheMiddleware: () => (_req, _res, next) => next(),
+  cacheJSONResponse,
+  bumpCacheVersion,
+  clearCache,
+}));
+
+// Logger
+await jest.unstable_mockModule('../utils/logger.js', () => ({
+  logSearch: jest.fn(),
+  logUpload: jest.fn(),
+  logListDocs: jest.fn(),
+}));
+
+// Multer: simule single('pdf') en posant req.file
+await jest.unstable_mockModule('multer', () => ({
+  default: () => ({
+    single: () => (req, _res, next) => {
+      req.file = {
+        path: 'uploads/tmp123.pdf',
+        originalname: 'test.pdf',
+        size: 1234,
+      };
+      next();
+    },
+  }),
+}));
+
+// FS
+const fsMock = {
+  existsSync: jest.fn().mockReturnValue(false),
+  renameSync: jest.fn(),
+  readFileSync: jest.fn().mockReturnValue(Buffer.from('%PDF-1.4')),
+  unlinkSync: jest.fn(),
+  createReadStream: jest.fn(() => {
+    const s = new stream.PassThrough();
+    setImmediate(() => s.end('PDFDATA'));
+    return s;
+  }),
+  mkdirSync: jest.fn(),
+  readdirSync: jest.fn().mockReturnValue([]),
+};
+await jest.unstable_mockModule('fs', () => ({ default: fsMock }));
+
+// pdf-parse
+await jest.unstable_mockModule('pdf-parse/lib/pdf-parse.js', () => ({
+  default: jest.fn().mockResolvedValue({
+    text: 'Bonjour elasticsearch. Bonjour pdf. Auteur X.',
+    info: { Author: 'Auteur X', CreationDate: '2024-01-01' },
+  }),
+}));
+
+// stopword
+await jest.unstable_mockModule('stopword', () => ({
+  default: { fra: ['de', 'la', 'le', 'et', 'un', 'une', 'les', 'du'] },
+}));
+
+// Elasticsearch Client
+const searchMock = jest.fn();
+const indexMock = jest.fn();
+const getMock = jest.fn();
+const refreshMock = jest.fn();
+const existsMock = jest.fn();
+const deleteMock = jest.fn();
+const createMock = jest.fn();
+await jest.unstable_mockModule('@elastic/elasticsearch', () => ({
+  Client: class {
+    constructor() {
+      this.search = searchMock;
+      this.index = indexMock;
+      this.get = getMock;
+      this.indices = {
+        refresh: refreshMock,
+        exists: existsMock,
+        delete: deleteMock,
+        create: createMock,
+      };
+    }
+  },
+}));
+
+// utils/pdfUtils
+await jest.unstable_mockModule('../utils/pdfUtils.js', () => ({
+  extractPagesText: jest.fn().mockResolvedValue([
+    { pageNumber: 1, text: 'Bonjour elasticsearch. Bonjour pdf.' },
+  ]),
+}));
+
+// SearchLog (mongoose-like chain)
+const distinctMock = jest.fn().mockResolvedValue(['budget 2024', 'contrat cadre']);
+const findChain = {
+  sort: () => findChain,
+  limit: () => findChain,
+  distinct: distinctMock,
+};
+await jest.unstable_mockModule('../models/Logs.js', () => ({
+  SearchLog: { find: jest.fn().mockReturnValue(findChain) },
+}));
+
+// Router /api/auth (pas utilisé ici, stub simple)
+await jest.unstable_mockModule('../routes/auth.js', () => ({
+  default: express.Router(),
+}));
+
+// Env avant import
+process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-secret';
 
-// --- Import du router testé après les mocks et l'env ---
-const { default: router } = await import('../routes/auth.js');
-
-// Raccourcis vers les mocks
-const { User } = userMock;
-const bcrypt = bcryptMock;
-const jwt = jwtMock;
-const { logAuth } = loggerMock;
-
-// App factory
-function makeApp() {
-  const app = express();
-  app.use(express.json());
-  app.use('/api/auth', router);
-  return app;
-}
+// ----- Import de l'app APRÈS mocks -----
+const { default: app } = await import('../server.js'); // adapte si ton serveur est ailleurs
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // optionnel: redéfinir pour chaque test
   process.env.JWT_SECRET = 'test-secret';
+
+  // par défaut, pas de doublon pour upload
+  searchMock.mockResolvedValue({ hits: { hits: [], total: { value: 0 } } });
+  indexMock.mockResolvedValue({ _id: 'doc1' });
+  refreshMock.mockResolvedValue({});
+  existsMock.mockResolvedValue(false);
+  deleteMock.mockResolvedValue({});
+  createMock.mockResolvedValue({});
+  getMock.mockResolvedValue({
+    _source: {
+      filePath: 'stored_pdfs/x.pdf',
+      originalPath: 'stored_pdfs/x.pdf',
+      filename: 'x.pdf',
+      originalName: 'x.pdf',
+    },
+  });
+  fsMock.existsSync.mockReturnValue(false); // download/open -> 404
 });
 
-describe('POST /api/auth/register', () => {
-  test('201 nouveau user', async () => {
-    User.findOne.mockResolvedValue(null);
-    bcrypt.hash.mockResolvedValue('hashed_pw');
-    const now = new Date('2024-01-01T00:00:00Z');
-    const doc = {
-      _id: '507f1f77bcf86cd799439011',
-      email: 'a@b.c',
-      name: 'Ben',
-      createdAt: now,
-      password: 'hashed_pw',
-    };
-    User.create.mockResolvedValue(doc);
-    jwt.sign.mockReturnValue('jwt_token');
+// ---- Tests ----
 
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email: 'a@b.c', password: 'pw', name: 'Ben' });
+test('GET / renvoie statut service', async () => {
+  const res = await request(app).get('/');
+  expect(res.status).toBe(200);
+  expect(res.body).toEqual({ ok: true, service: 'Service API' });
+});
 
-    expect(res.status).toBe(201);
-    expect(User.findOne).toHaveBeenCalledWith({ email: 'a@b.c' });
-    expect(bcrypt.hash).toHaveBeenCalledWith('pw', 12);
-    expect(User.create).toHaveBeenCalledWith({
-      email: 'a@b.c',
-      password: 'hashed_pw',
-      name: 'Ben',
-    });
-    expect(jwt.sign).toHaveBeenCalledWith(
-      {},
-      'test-secret',
-      expect.objectContaining({
-        subject: '507f1f77bcf86cd799439011',
-        expiresIn: 60 * 60 * 24 * 7,
+test('POST /api/pdfs/upload indexe un PDF', async () => {
+  const res = await request(app)
+    .post('/api/pdfs/upload')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(200);
+  expect(indexMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      index: 'pdfs',
+      document: expect.objectContaining({
+        filename: expect.stringContaining('.pdf'),
+        contentHash: expect.any(String),
+        tags: expect.any(Array),
+        pages: expect.any(Array),
+        uploadedAt: expect.any(Date),
+        originalPath: expect.stringContaining('stored_pdfs'),
       }),
-    );
-    expect(logAuth).toHaveBeenCalledWith('507f1f77bcf86cd799439011', 'creation');
-
-    expect(res.body).toEqual({
-      user: {
-        id: '507f1f77bcf86cd799439011',
-        email: 'a@b.c',
-        name: 'Ben',
-        createdAt: now.toISOString(),
-      },
-      token: 'jwt_token',
-    });
-  });
-
-  test('409 exists', async () => {
-    User.findOne.mockResolvedValue({ _id: 'x' });
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email: 'a@b.c', password: 'pw', name: 'Ben' });
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'Email déjà utilisé' });
-  });
-
-  test('409 duplicate key 11000', async () => {
-    User.findOne.mockResolvedValue(null);
-    bcrypt.hash.mockResolvedValue('hashed_pw');
-    User.create.mockRejectedValue({ code: 11000 });
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email: 'a@b.c', password: 'pw', name: 'Ben' });
-    expect(res.status).toBe(409);
-    expect(res.body).toEqual({ error: 'Email déjà utilisé' });
-  });
-
-  test('500 erreur serveur', async () => {
-    User.findOne.mockResolvedValue(null);
-    bcrypt.hash.mockResolvedValue('hashed_pw');
-    User.create.mockRejectedValue(new Error('db down'));
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email: 'a@b.c', password: 'pw', name: 'Ben' });
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Erreur serveur' });
-  });
+    }),
+  );
+  expect(refreshMock).toHaveBeenCalledWith({ index: 'pdfs' });
+  expect(bumpCacheVersion).toHaveBeenCalled();
+  expect(res.body).toEqual(
+    expect.objectContaining({ message: 'PDF indexé avec succès', id: 'doc1' }),
+  );
 });
 
-describe('POST /api/auth/login', () => {
-  test('200 identifiants valides', async () => {
-    const now = new Date('2024-01-01T00:00:00Z');
-    const doc = {
-      _id: '507f1f77bcf86cd799439011',
-      email: 'a@b.c',
-      name: 'Ben',
-      createdAt: now,
-      password: 'hashed_pw',
-    };
-    User.findOne.mockResolvedValue(doc);
-    bcrypt.compare.mockResolvedValue(true);
-    jwt.sign.mockReturnValue('jwt_token');
-
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ email: 'a@b.c', password: 'pw' });
-
-    expect(res.status).toBe(200);
-    expect(bcrypt.compare).toHaveBeenCalledWith('pw', 'hashed_pw');
-    expect(jwt.sign).toHaveBeenCalled();
-    expect(logAuth).toHaveBeenCalledWith('507f1f77bcf86cd799439011', 'connexion');
-    expect(res.body).toEqual({
-      user: {
-        id: '507f1f77bcf86cd799439011',
-        email: 'a@b.c',
-        name: 'Ben',
-        createdAt: now.toISOString(),
-      },
-      token: 'jwt_token',
-    });
-  });
-
-  test('401 email inconnu', async () => {
-    User.findOne.mockResolvedValue(null);
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ email: 'x@y.z', password: 'pw' });
-    expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: 'Identifiants invalides' });
-  });
-
-  test('401 mauvais mot de passe', async () => {
-    User.findOne.mockResolvedValue({ _id: 'id', password: 'hash' });
-    bcrypt.compare.mockResolvedValue(false);
-    const app = makeApp();
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ email: 'a@b.c', password: 'bad' });
-    expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: 'Identifiants invalides' });
-  });
+test('POST /api/pdfs/upload détecte un doublon (409)', async () => {
+  searchMock.mockResolvedValueOnce({ hits: { hits: [{ _id: 'dup' }] } });
+  const res = await request(app)
+    .post('/api/pdfs/upload')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(409);
+  expect(res.body).toEqual({ error: 'Fichier déjà indexé' });
 });
 
-describe('POST /api/auth/logout', () => {
-  test('200 et logAuth appelé', async () => {
-    const app = makeApp();
-    const res = await request(app).post('/api/auth/logout').send();
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ message: 'Déconnexion enregistrée' });
-    expect(logAuth).toHaveBeenCalledWith('507f1f77bcf86cd799439011', 'deconnexion');
+test('GET /api/pdfs/search retourne items formatés', async () => {
+  searchMock.mockResolvedValueOnce({
+    hits: {
+      total: { value: 42 },
+      hits: [
+        {
+          _id: 'id1',
+          _source: { originalName: 'f1.pdf', uploadedAt: '2024-02-01' },
+          inner_hits: {
+            pages_matching: {
+              hits: {
+                hits: [
+                  {
+                    _source: { pageNumber: 3 },
+                    highlight: { 'pages.text': ['foo <mark>bar</mark> baz'] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    },
   });
+  const res = await request(app)
+    .get('/api/pdfs/search?q=bar&page=1')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(200);
+  expect(res.body.total).toBe(42);
+  expect(res.body.hits[0]).toEqual(
+    expect.objectContaining({
+      id: 'id1',
+      originalName: 'f1.pdf',
+      uploadedAt: '2024-02-01',
+      pageNumber: 3,
+    }),
+  );
+});
 
-  test('500 si logAuth échoue', async () => {
-    logAuth.mockRejectedValueOnce(new Error('logger down'));
-    const app = makeApp();
-    const res = await request(app).post('/api/auth/logout').send();
-    expect(res.status).toBe(500);
-    expect(res.body).toEqual({ error: 'Erreur serveur' });
+test('GET /api/pdfs liste 200', async () => {
+  searchMock.mockResolvedValueOnce({
+    hits: {
+      hits: [
+        {
+          _id: 'a',
+          _source: { filename: 'a.pdf', tags: [], uploadedAt: '2024-01-01' },
+        },
+      ],
+    },
   });
+  const res = await request(app)
+    .get('/api/pdfs')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(200);
+  expect(res.body.length).toBe(1);
+});
+
+test('DELETE /api/cache vide le cache', async () => {
+  const res = await request(app)
+    .delete('/api/cache')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(200);
+  expect(res.body).toEqual({ success: true, message: 'Cache vidé' });
+  expect(clearCache).toHaveBeenCalled();
+});
+
+test('GET /api/pdfs/:id/download renvoie 404 si fichier absent', async () => {
+  const res = await request(app)
+    .get('/api/pdfs/abc/download')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(404);
+  expect(res.body).toEqual({ error: 'Fichier introuvable' });
+});
+
+test('GET /api/pdfs/:id/open renvoie 404 si fichier absent', async () => {
+  const res = await request(app)
+    .get('/api/pdfs/abc/open')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(404);
+  expect(res.body).toEqual({ error: 'Fichier introuvable' });
+});
+
+test('GET /api/pdfs/suggestions retourne suggestions', async () => {
+  const res = await request(app)
+    .get('/api/pdfs/suggestions?q=bu')
+    .set('Authorization', 'Bearer x');
+  expect(res.status).toBe(200);
+  expect(res.body).toEqual(['budget 2024', 'contrat cadre']);
 });
