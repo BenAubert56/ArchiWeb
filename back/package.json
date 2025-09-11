@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
-    "test": "set NODE_ENV=test && set NODE_OPTIONS=--experimental-vm-modules && jest"
+    "lint": "eslint .",
+    "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:ci": "jest --coverage"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.19.1",
