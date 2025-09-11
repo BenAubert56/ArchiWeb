@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 
+const hostIp = import.meta.env.APP_HOST_IP || 'localhost';
+
 export default function Search() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -38,7 +40,7 @@ export default function Search() {
       try {
         const token = localStorage.getItem("token"); // ou autre méthode pour récupérer le token
         const res = await axios.get(
-          `http://localhost:3000/api/pdfs/suggestions?q=${encodeURIComponent(query)}`,
+          `http://${hostIp}:3000/api/pdfs/suggestions?q=${encodeURIComponent(query)}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         setSuggestions(res.data);
@@ -58,7 +60,7 @@ export default function Search() {
     setError("");
     try {
       const token = localStorage.getItem("token");
-      const url = `http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(q)}&page=${pageToLoad}`;
+      const url = `http://${hostIp}:3000/api/pdfs/search?q=${encodeURIComponent(q)}&page=${pageToLoad}`;
       const res = await axios.get(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
       const data = res.data;
       if (Array.isArray(data)) {
@@ -88,12 +90,13 @@ export default function Search() {
     }
   };
 
-  const handleSearch = async () => {
-    if (!query.trim()) return;
+  const handleSearch = async (searchQuery) => {
+    const q = searchQuery ?? query;
+    if (!q.trim()) return;
     // New search resets to first page
     setResults([]);
     setPage(1);
-    await fetchSearch(1);
+    await fetchSearch(1, q);
   };
 
   useEffect(() => {

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
+const hostIp = import.meta.env.APP_HOST_IP || 'localhost';
+
 export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,7 +16,7 @@ export function Login() {
     setError("");
     setLoading(true);
     try {
-      const res = await axios.post("http://localhost:3000/api/auth/login", { email, password });
+      const res = await axios.post(`http://${hostIp}:3000/api/auth/login`, { email, password });
       const { token, user } = res.data;
       if (token) localStorage.setItem("token", token);
       if (user) localStorage.setItem("user", JSON.stringify(user));
@@ -58,7 +60,7 @@ export function Register() {
     }
     setLoading(true);
     try {
-      await axios.post("http://localhost:3000/api/auth/register", { name, email, password });
+      await axios.post(`http://${hostIp}:3000/api/auth/register`, { name, email, password });
       alert("Compte créé. Vous pouvez vous connecter.");
       // Optionally redirect to login page for convenience
       window.location.href = "/login";
