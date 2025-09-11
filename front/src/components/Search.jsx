@@ -170,31 +170,31 @@ export default function Search() {
       <ul className="mt-4 space-y-3">
         {results.map((r, idx) => {
           const id = r.id || idx;
-          const title = r.fileName || "(Sans nom)";
-          const link = r.link || r.url || (r.filePath ? `/pdfs/${r.filePath}` : undefined);
+          const title = r.originalName || "(Sans nom)";
+          const pageNum = r.pageNumber || 1;
+          const link = `/api/pdfs/${id}/open#page=${pageNum}`;
           return (
             <li key={id} className="border rounded p-3 bg-white">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold truncate max-w-[60ch]" title={title}>{title}</div>
-                  <div className="text-xs text-gray-500">{r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : ''}</div>
+                  <div className="text-xs text-gray-500">
+                    {r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : ""}
+                  </div>
                 </div>
-                {link && (
-                  <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
-                    Ouvrir
-                  </a>
-                )}
+                <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
+                  Ouvrir (page {pageNum})
+                </a>
               </div>
-              {r.content && (
+              {r.snippet && (
                 <p
                   className="text-sm text-gray-700 mt-2"
-                  dangerouslySetInnerHTML={{ __html: String(r.content) }}
+                  dangerouslySetInnerHTML={{ __html: String(r.snippet) }}
                 />
               )}
             </li>
           );
         })}
-        {!loading && results.length === 0 && query && <div>Aucun résultat</div>}
       </ul>
 
       {totalPages > 1 && (
