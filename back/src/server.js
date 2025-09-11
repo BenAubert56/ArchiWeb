@@ -373,22 +373,26 @@ app.use((err, req, res, next) => {
 });
 
 // ---------- Démarrage ----------
-const PORT = process.env.PORT || 3000;
-connectDB(process.env.MONGODB_URI)
-  .then(() =>
-    app.listen(PORT, async () => {
-      console.log(`API sur http://localhost:${PORT}`);
-      try {
-        // Invalide les anciennes entrées de cache afin d'assurer que les nouvelles réponses
-        // de recherche incluent bien le champ 'duration'.
-        await bumpCacheVersion();
-        console.log('Cache version bumped on startup');
-      } catch (e) {
-        console.warn('Unable to bump cache version on startup:', e);
-      }
-    })
-  )
-  .catch(err => {
-    console.error('Échec connexion BDD', err);
-    process.exit(1);
-  });
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = process.env.PORT || 3000;
+  connectDB(process.env.MONGODB_URI)
+    .then(() =>
+      app.listen(PORT, async () => {
+        console.log(`API sur http://localhost:${PORT}`);
+        try {
+          // Invalide les anciennes entrées de cache
+          await bumpCacheVersion();
+          console.log('Cache version bumped on startup');
+        } catch (e) {
+          console.warn('Unable to bump cache version on startup:', e);
+        }
+      })
+    )
+    .catch(err => {
+      console.error('Échec connexion BDD', err);
+      process.exit(1);
+    });
+}
+
+
+export default app;
