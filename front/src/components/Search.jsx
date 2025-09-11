@@ -8,33 +8,10 @@ export default function Search() {
   const [error, setError] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const searchRef = useRef();
-    const [page, setPage] = useState(1);
+  const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [duration, setDuration] = useState(0);
-
-  const fetchSearch = async (pageToLoad = 1) => {
-    if (!query.trim()) return;
-
-    setLoading(true);
-    setError("");
-    try {
-      const token = localStorage.getItem("token");
-      const res = await axios.get(
-        `http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}&page=${pageToLoad}`,
-        token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
-      );
-      const data = Array.isArray(res.data) ? res.data : (res.data?.hits ?? []);
-      setResults(data);
-      setTotal(res.data?.total ?? 0);
-      setTotalPages(res.data?.totalPages ?? 0);
-      setDuration(res.data?.duration ?? 0);
-    } catch (e) {
-      setError("Erreur lors de la recherche");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Fermer suggestions si clic en dehors
   useEffect(() => {
@@ -72,7 +49,7 @@ export default function Search() {
     fetchSuggestions();
   }, [query]);
 
-  const handleSearch = async (searchQuery) => {
+  const fetchSearch = async (pageToLoad = 1, searchQuery) => {
     const q = searchQuery ?? query;
     if (!q.trim()) return;
     // Reset previous results so a new search replaces instead of appearing appended
@@ -81,7 +58,7 @@ export default function Search() {
     setError("");
     try {
       const token = localStorage.getItem("token");
-      const url = `http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(query)}&page=${pageToLoad}`;
+      const url = `http://localhost:3000/api/pdfs/search?q=${encodeURIComponent(q)}&page=${pageToLoad}`;
       const res = await axios.get(url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined);
       const data = res.data;
       if (Array.isArray(data)) {
@@ -135,8 +112,7 @@ export default function Search() {
 
   const canPrev = page > 1;
   const canNext = totalPages > 0 && page < totalPages;
-
-    const ignoreNextSuggestions = useRef(false);
+  const ignoreNextSuggestions = useRef(false);
 
   // Quand on clique sur une suggestion
   const handleSuggestionClick = (s) => {
