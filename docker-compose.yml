@@ -14,6 +14,31 @@ services:
       - NODE_ENV=development
     tty: true
 
+  back:
+    container_name: back
+    working_dir: /app
+    image: node:20-alpine
+    restart: always
+    command: sh -c "npm ci && npm run dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./back:/app
+      - /app/node_modules
+      - ./back/stored_pdfs:/app/stored_pdfs
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MONGODB_URI=mongodb://root:root@mongo:27017/google-like?authSource=admin
+      - JWT_SECRET=dev-secret
+      - REDIS_URL=redis://redis:6379
+      - ES_NODES=http://elasticsearch:9200
+    depends_on:
+      - mongo
+      - elasticsearch
+      - redis
+    tty: true
+
   mongo:
     image: mongo
     container_name: mongo
