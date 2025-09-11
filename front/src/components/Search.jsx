@@ -88,12 +88,13 @@ export default function Search() {
     }
   };
 
-  const handleSearch = async () => {
-    if (!query.trim()) return;
+  const handleSearch = async (searchQuery) => {
+    const q = searchQuery ?? query;
+    if (!q.trim()) return;
     // New search resets to first page
     setResults([]);
     setPage(1);
-    await fetchSearch(1);
+    await fetchSearch(1, q);
   };
 
   useEffect(() => {
