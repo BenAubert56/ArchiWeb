@@ -23,7 +23,9 @@ function buildCanonicalKeyFromReq(req, version) {
   entries.sort((a, b) => a[0].localeCompare(b[0]));
   const qs = new URLSearchParams(entries).toString();
   const userSeg = req.user?.id ? `:u${req.user.id}` : '';
-  return `pdfs:v${version}${userSeg}:${route}${qs ? `?${qs}` : ''}`;
+  // Response schema/version suffix to invalidate previously cached shapes
+  const schemaSeg = ':rsp2';
+  return `pdfs:v${version}${userSeg}${schemaSeg}:${route}${qs ? `?${qs}` : ''}`;
 }
 
 export async function makeCacheKey(req) {
