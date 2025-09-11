@@ -4,6 +4,21 @@ import request from 'supertest';
 import stream from 'stream';
 import express from 'express';
 
+await jest.unstable_mockModule('pdfjs-dist/legacy/build/pdf.js', () => ({
+  getDocument: jest.fn(() => ({
+    promise: Promise.resolve({
+      numPages: 1,
+      getPage: jest.fn(() =>
+        Promise.resolve({
+          getTextContent: jest.fn(() =>
+            Promise.resolve({ items: [{ str: 'Mock PDF content' }] })
+          ),
+        })
+      ),
+    }),
+  })),
+}));
+
 // DB
 await jest.unstable_mockModule('../db.js', () => ({
   connectDB: jest.fn().mockResolvedValue(undefined),
