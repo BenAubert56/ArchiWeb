@@ -14,6 +14,31 @@ services:
       - NODE_ENV=development
     tty: true
 
+  back:
+    container_name: back
+    working_dir: /app
+    image: node:20-alpine
+    restart: always
+    command: sh -c "npm ci && npm run dev"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./back:/app
+      - /app/node_modules
+      - ./back/stored_pdfs:/app/stored_pdfs
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - MONGODB_URI=mongodb://root:root@mongo:27017/google-like?authSource=admin
+      - JWT_SECRET=dev-secret
+      - REDIS_URL=redis://redis:6379
+      - ES_NODES=http://elasticsearch:9200
+    depends_on:
+      - mongo
+      - elasticsearch
+      - redis
+    tty: true
+
   mongo:
     image: mongo
     container_name: mongo
@@ -29,12 +54,12 @@ services:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
-    container_name: es-node4
+    container_name: es-node3
     environment:
       - cluster.name=pdf-cluster
-      - node.name=node4
+      - node.name=node3
       - network.host=0.0.0.0
-      - transport.publish_host=10.104.126.189
+      - transport.publish_host=10.104.126.60
       - http.port=9200
       - transport.port=9300
       - discovery.seed_hosts=10.104.126.159,10.104.126.129,10.104.126.60,10.104.126.189,10.104.126.67
@@ -50,7 +75,7 @@ services:
       - 9200:9200
       - 9300:9300
     volumes:
-      - ./data/node4:/usr/share/elasticsearch/data
+      - ./data/node3:/usr/share/elasticsearch/data
 
   redis:
     image: redis:7
