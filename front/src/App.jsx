@@ -4,6 +4,8 @@ import axios from "axios";
 import Search from "./components/Search";
 import { Login, Register } from "./components/Auth";
 
+const hostIp = import.meta.env.APP_HOST_IP || 'localhost';
+
 function Header({ isAuthed, user, onLogout }) {
   return (
     <header className="bg-white shadow">
@@ -60,7 +62,7 @@ function AppInner() {
     const token = localStorage.getItem("token");
     try {
       if (token) {
-        await axios.post("http://localhost:3000/api/auth/logout", {}, {
+        await axios.post(`http://${hostIp}:3000/api/auth/logout`, {}, {
           headers: { Authorization: `Bearer ${token}` }
         });
       }
