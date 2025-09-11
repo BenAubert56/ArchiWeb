@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import axios from "axios";
 
-const hostIp = import.meta.env.APP_HOST_IP || 'localhost';
+const hostIp = import.meta.env.VITE_APP_HOST_IP || 'localhost';
 
 export default function Search() {
   const [query, setQuery] = useState("");

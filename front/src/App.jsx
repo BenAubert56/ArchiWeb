@@ -4,7 +4,7 @@ import axios from "axios";
 import Search from "./components/Search";
 import { Login, Register } from "./components/Auth";
 
-const hostIp = import.meta.env.APP_HOST_IP || 'localhost';
+const hostIp = import.meta.env.VITE_APP_HOST_IP || 'localhost';
 
 function Header({ isAuthed, user, onLogout }) {
   return (

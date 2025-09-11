@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
-const hostIp = import.meta.env.APP_HOST_IP || 'localhost';
+const hostIp = import.meta.env.VITE_APP_HOST_IP || 'localhost';
 
 export function Login() {
   const [email, setEmail] = useState("");

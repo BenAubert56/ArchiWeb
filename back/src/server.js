@@ -365,6 +365,37 @@ app.get('/api/pdfs/suggestions', auth, async (req, res) => {
   }
 });
 
+  // ---------- Supprimer tous les PDFs, index et cache (sans auth) ----------
+app.delete('/api/reset-all', async (req, res) => {
+  try {
+    const files = fs.readdirSync(STORAGE_DIR);
+    for (const file of files) {
+      fs.unlinkSync(path.join(STORAGE_DIR, file));
+    }
+
+    const indexExists = await client.indices.exists({ index: 'pdfs' });
+    if (indexExists) {
+      await client.indices.delete({ index: 'pdfs' });
+    }
+
+    await client.indices.create({ index: 'pdfs' });
+
+    await clearCache();
+
+    res.json({
+      success: true,
+      message: 'Tous les fichiers, index et cache ont été supprimés'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      error: `Erreur lors de la réinitialisation: ${err.message}`
+    });
+  }
+});
+
+
 // ---------- 404 & erreurs ----------
 app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
 app.use((err, req, res, next) => {
