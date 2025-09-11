@@ -1,4 +1,3 @@
-// src/__tests__/server.test.js
 import { jest } from '@jest/globals';
 import request from 'supertest';
 import stream from 'stream';
@@ -60,7 +59,7 @@ const fsMock = {
 };
 await jest.unstable_mockModule('fs', () => ({ default: fsMock }));
 
-// pdf-parse
+// pdf-parse (si utilisé quelque part)
 await jest.unstable_mockModule('pdf-parse/lib/pdf-parse.js', () => ({
   default: jest.fn().mockResolvedValue({
     text: 'Bonjour elasticsearch. Bonjour pdf. Auteur X.',
@@ -105,12 +104,19 @@ await jest.unstable_mockModule('../routes/auth.js', () => ({
   default: express.Router(),
 }));
 
+// ---- Mock pdfUtils pour éviter pdfjs/canvas en CI ----
+await jest.unstable_mockModule('../utils/pdfUtils.js', () => ({
+  extractPagesText: jest.fn().mockResolvedValue([
+    { pageNumber: 1, text: 'Bonjour elasticsearch. Bonjour pdf. Auteur X.' },
+  ]),
+}));
+
 // Env avant import
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test-secret';
 
 // ----- Import de l'app APRÈS mocks -----
-const { default: app } = await import('../server.js'); // adapte si ton serveur est ailleurs
+const { default: app } = await import('../server.js');
 
 beforeEach(() => {
   jest.clearAllMocks();
