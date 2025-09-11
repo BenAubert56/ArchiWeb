@@ -15,8 +15,8 @@ on:
   workflow_dispatch: {}
 
 env:
-  IMAGE_FRONT: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/archiweb-app-front
-  IMAGE_BACK:  docker.io/${{ secrets.DOCKERHUB_USERNAME }}/archiweb-app-back
+  IMAGE_FRONT: docker.io/${{ secrets.DOCKER_USER }}/archiweb-app-front
+  IMAGE_BACK:  docker.io/${{ secrets.DOCKER_USER }}/archiweb-app-back
 
 jobs:
   # --- CI: lint + tests (back) ---
@@ -62,7 +62,7 @@ jobs:
       - name: Docker login (Docker Hub)
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Compute tags
