@@ -186,7 +186,7 @@ app.get(
     try {
       const { q = '', page: pageStr } = req.query;
       const query = String(q || '').trim();
-      const FIXED_PAGE_SIZE = 20;
+      const FIXED_PAGE_SIZE = 10;
 
       if (!query) {
         return cacheJSONResponse(

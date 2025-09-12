@@ -51,7 +51,7 @@ export default function Search() {
     fetchSuggestions();
   }, [query]);
 
-  const fetchSearch = async (pageToLoad = 1, searchQuery) => {
+    const fetchSearch = async (pageToLoad = 1, searchQuery) => {
     const q = searchQuery ?? query;
     if (!q.trim()) return;
     // Reset previous results so a new search replaces instead of appearing appended
@@ -74,16 +74,16 @@ export default function Search() {
         const hits = Array.isArray(data?.hits) ? data.hits : [];
         setResults(hits);
         const respTotal = Number(data?.total ?? hits.length);
-        const computedPages = respTotal > 0 ? Math.ceil(respTotal / 20) : 0;
+        const pageSize = Number(data?.pageSize ?? 10);
+        const computedPages = respTotal > 0 ? Math.ceil(respTotal / pageSize) : 0;
         const serverPages = Number(data?.totalPages ?? 0);
         const respTotalPages = Math.max(serverPages, computedPages);
         setTotal(respTotal);
         setTotalPages(respTotalPages);
         setDuration(Number(data?.duration ?? 0));
-        // prefer server-reported page if present
         setPage(Number(data?.page ?? pageToLoad));
       }
-    } catch (e) {
+    } catch {
       setError("Erreur lors de la recherche");
     } finally {
       setLoading(false);
@@ -163,7 +163,7 @@ export default function Search() {
 
       {(total > 0 || totalPages > 0) && (
         <div className="mt-4 text-sm text-gray-700">
-          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''}
+          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''}{duration ? ` — ${duration} ms` : ''}
         </div>
       )}
 
@@ -172,6 +172,7 @@ export default function Search() {
           const id = r.id || idx;
           const title = r.fileName || "(Sans nom)";
           const link = r.link || r.url || (r.filePath ? `/pdfs/${r.filePath}` : undefined);
+          const snippet = r.excerpts?.[0] || r.content;
           return (
             <li key={id} className="border rounded p-3 bg-white">
               <div className="flex items-center justify-between">
@@ -185,10 +186,10 @@ export default function Search() {
                   </a>
                 )}
               </div>
-              {r.content && (
+              {snippet && (
                 <p
                   className="text-sm text-gray-700 mt-2"
-                  dangerouslySetInnerHTML={{ __html: String(r.content) }}
+                  dangerouslySetInnerHTML={{ __html: String(snippet) }}
                 />
               )}
             </li>
