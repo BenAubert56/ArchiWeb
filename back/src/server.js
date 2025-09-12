@@ -210,25 +210,53 @@ app.get(
       const pageSize = FIXED_PAGE_SIZE;
       const from = (page - 1) * pageSize;
 
+      //const result = await client.search({
+      //  index: 'pdfs',
+      //  _source: ['filename', 'originalname', 'uploadedAt'],
+      //  from,
+      //  size: pageSize,
+      //  track_total_hits: false,
+      //  query: {
+      //    bool: {
+      //      should: [
+      //        { match: { content: q } }, // match large sur le texte
+      //        { wildcard: { content: `*${q}*` } }, // match sur les mots contenant "ta"
+      //        { term: { 'filename.keyword': { value: q, boost: 3 } } },
+      //        { terms: { tags: q.split(' '), boost: 2 } }
+      //      ]
+      //    }
+      //  },
+      //  highlight: {
+      //    fields: {
+      //      content: {
+      //        fragment_size: 50,
+      //        number_of_fragments: 10000,
+      //        pre_tags: ['<mark>'],
+      //        post_tags: ['</mark>'],
+      //        fragmenter: 'simple'
+      //      }
+      //    }
+      //  }
+      //});
+
       const result = await client.search({
         index: 'pdfs',
-        _source: ['filename', 'originalname', 'uploadedAt'],
+        _source: ['filename', 'uploadedAt'],
         from,
         size: pageSize,
         track_total_hits: false,
         query: {
           bool: {
             should: [
-              { match: { content: q } }, // match large sur le texte
-              { wildcard: { content: `*${q}*` } }, // match sur les mots contenant "ta"
-              { term: { 'filename.keyword': { value: q, boost: 3 } } },
-              { terms: { tags: q.split(' '), boost: 2 } }
+              { match: { content: q } },
+              { wildcard: { content: `*${q}*` } }
             ]
           }
         },
         highlight: {
           fields: {
             content: {
+              type: 'fvh',
               fragment_size: 50,
               number_of_fragments: 10000,
               pre_tags: ['<mark>'],
@@ -267,10 +295,10 @@ app.get(
       }
 
       const items = Array.from(itemsMap.values());
-          
-          
+
+
       const total = items.reduce((acc, item) => acc + item.excerpts.length, 0);
-          const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
+      const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
       const duration = Date.now() - start;
 
       await logSearch({
