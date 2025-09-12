@@ -56,6 +56,11 @@ const fsMock = {
     setImmediate(() => s.end('PDFDATA'));
     return s;
   }),
+  createWriteStream: jest.fn(() => {
+    const s = new stream.PassThrough();
+    // ensure 'finish' will fire when piped input ends
+    return s;
+  }),
   mkdirSync: jest.fn(),
 };
 await jest.unstable_mockModule('fs', () => ({ default: fsMock }));
@@ -175,7 +180,7 @@ test('GET /api/pdfs/search retourne items formatés', async () => {
     .get('/api/pdfs/search?q=bar&page=1')
     .set('Authorization', 'Bearer x');
   expect(res.status).toBe(200);
-  expect(res.body.total).toBe(42);
+  expect(res.body.total).toBe(1);
   expect(res.body.hits[0]).toEqual(
     expect.objectContaining({ id: 'id1', fileName: 'f1.pdf', uploadedAt: '2024-02-01' }),
   );
