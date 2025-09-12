@@ -3,6 +3,7 @@
 ## Prérequis
 - [Node.js](https://nodejs.org) (version 18+ recommandée)
 - npm (installé avec Node.js)
+- Docker
 
 Vérifiez votre installation :
 ```bash
@@ -10,24 +11,19 @@ node -v
 npm -v
 ```
 
-## Installation 
+## Docker 
+### Lancer le conteneur maître (serveur)
 ```bash
-git clone https://github.com/BenAubert56/ArchiWeb.git
+docker compose -f docker-compose.server.yml -p server up -d
 ```
 
+### Lancer le conteneur esclave (cluster / nodes)
 ```bash
-cd ArchiWeb/back
+docker compose -f docker-compose.cluster.yml -p cluster up -d
 ```
 
-```bash
-npm install
-```
 
-```bash
-npm start
-```
-
-# Lancer MongoDB 
+# MongoDB 
 Se connecter en root
 ```bash
 docker exec -it mongo mongosh -u root -p root --authenticationDatabase admin

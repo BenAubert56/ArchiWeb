@@ -136,6 +136,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-docker-compose.yml
+docker-compose.cluster.yml
 
 back/src/stored_pdf
