@@ -21,7 +21,7 @@ export default function Search() {
   const allExcerpts = results.flatMap(r =>
     r.excerpts.map(excerpt => ({
       excerpt,
-      fileName: r.fileName || r.originalname || "(Sans nom)",
+      fileName: r.originalname || "(Sans nom)",
       uploadedAt: r.uploadedAt,
       id: r.id,
       pageNum: r.pageNumber || 1

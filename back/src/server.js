@@ -241,7 +241,7 @@ app.get(
 
       const result = await client.search({
         index: 'pdfs',
-        _source: ['filename', 'uploadedAt'],
+        _source: ['filename', 'originalname', 'uploadedAt'],
         from,
         size: pageSize,
         track_total_hits: false,
@@ -274,6 +274,7 @@ app.get(
         const id = hit._id;
         const src = hit._source || {};
         const filename = src.filename;
+        const originalname = src.originalname;
         const uploadedAt = src.uploadedAt;
 
         const fragments = (hit.highlight?.content || []).map(f =>
@@ -284,6 +285,7 @@ app.get(
           itemsMap.set(id, {
             id,
             fileName: filename,
+            originalname: originalname,
             uploadedAt,
             excerpts: []
           });
