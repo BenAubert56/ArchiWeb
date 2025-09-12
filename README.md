@@ -1,4 +1,4 @@
-# Projet Express
+# Projet
 
 ## Prérequis
 - [Node.js](https://nodejs.org) (version 18+ recommandée)
@@ -23,7 +23,7 @@ docker compose -f docker-compose.cluster.yml -p cluster up -d
 ```
 
 
-# MongoDB 
+## MongoDB 
 Se connecter en root
 ```bash
 docker exec -it mongo mongosh -u root -p root --authenticationDatabase admin
