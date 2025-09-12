@@ -215,19 +215,14 @@ app.get(
         _source: ['filename', 'originalname', 'uploadedAt'],
         from,
         size: pageSize,
-        track_total_hits: true,
+        track_total_hits: false,
         query: {
           bool: {
             should: [
+              { match: { content: q } }, // match large sur le texte
+              { wildcard: { content: `*${q}*` } }, // match sur les mots contenant "ta"
               { term: { 'filename.keyword': { value: q, boost: 3 } } },
-              { terms: { tags: q.split(' '), boost: 2 } },
-              {
-                multi_match: {
-                  query: q,
-                  fields: ['content'],
-                  type: 'best_fields'
-                }
-              }
+              { terms: { tags: q.split(' '), boost: 2 } }
             ]
           }
         },
@@ -235,7 +230,7 @@ app.get(
           fields: {
             content: {
               fragment_size: 50,
-              number_of_fragments: 2,
+              number_of_fragments: 10000,
               pre_tags: ['<mark>'],
               post_tags: ['</mark>'],
               fragmenter: 'simple'
@@ -272,13 +267,10 @@ app.get(
       }
 
       const items = Array.from(itemsMap.values());
-
-      const total =
-        typeof result.hits.total === 'number'
-          ? result.hits.total
-          : result.hits.total?.value ?? items.length;
-
-      const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
+          
+          
+      const total = items.reduce((acc, item) => acc + item.excerpts.length, 0);
+          const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
       const duration = Date.now() - start;
 
       await logSearch({

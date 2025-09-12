@@ -15,6 +15,26 @@ export default function Search() {
   const [totalPages, setTotalPages] = useState(0);
   const [duration, setDuration] = useState(0);
 
+  const EXCERPT_PAGE_SIZE = 10; // nombre d'excerpts par page
+
+  // Regroupe tous les excerpts de tous les résultats
+  const allExcerpts = results.flatMap(r =>
+    r.excerpts.map(excerpt => ({
+      excerpt,
+      fileName: r.fileName || r.originalname || "(Sans nom)",
+      uploadedAt: r.uploadedAt,
+      id: r.id,
+      pageNum: r.pageNumber || 1
+    }))
+  );
+
+  const excerptTotalPages = Math.ceil(allExcerpts.length / EXCERPT_PAGE_SIZE);
+  const excerptPage = page; // tu peux gérer une pagination séparée si besoin
+  const excerptStart = (excerptPage - 1) * EXCERPT_PAGE_SIZE;
+  const excerptEnd = excerptStart + EXCERPT_PAGE_SIZE;
+  const excerptsToShow = allExcerpts.slice(excerptStart, excerptEnd);
+
+
   // Fermer suggestions si clic en dehors
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -168,63 +188,39 @@ export default function Search() {
       )}
 
       <ul className="mt-4 space-y-3">
-        {results.map((r, idx) => {
-          const id = r.id || idx;
-          const fileName = r.originalname || "(Sans nom)";
-          const uploadedAt = r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : "";
-          const pageNum = r.pageNumber || 1;
-          const link = `http://${hostIp}:3000/api/pdfs/${id}/open#page=${pageNum}`;
-
-          // Pour chaque excerpt, on crée un item
-          return r.excerpts && r.excerpts.length > 0 ? (
-            r.excerpts.map((excerpt, exIdx) => (
-              <li key={`${id}-${exIdx}`} className="border rounded p-3 bg-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold truncate max-w-[60ch]" title={fileName}>{fileName}</div>
-                    <div className="text-xs text-gray-500">{uploadedAt}</div>
-                  </div>
-                  <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
-                    Ouvrir (page {pageNum})
-                  </a>
-                </div>
-                <p
-                  className="text-sm text-gray-700 mt-2"
-                  dangerouslySetInnerHTML={{ __html: String(excerpt) }}
-                />
-              </li>
-            ))
-          ) : (
-            <li key={id} className="border rounded p-3 bg-white">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold truncate max-w-[60ch]" title={fileName}>{fileName}</div>
-                  <div className="text-xs text-gray-500">{uploadedAt}</div>
-                </div>
-                <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
-                  Ouvrir (page {pageNum})
-                </a>
+        {excerptsToShow.map((item, idx) => (
+          <li key={`${item.id}-${excerptStart + idx}`} className="border rounded p-3 bg-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold truncate max-w-[60ch]" title={item.fileName}>{item.fileName}</div>
+                <div className="text-xs text-gray-500">{item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : ""}</div>
               </div>
-              <div className="text-sm text-gray-700 mt-2">Aucun extrait</div>
-            </li>
-          );
-        })}
+              <a className="text-blue-600 underline" href={`http://${hostIp}:3000/api/pdfs/${item.id}/open#page=${item.pageNum}`} target="_blank" rel="noreferrer">
+                Ouvrir (page {item.pageNum})
+              </a>
+            </div>
+            <p
+              className="text-sm text-gray-700 mt-2"
+              dangerouslySetInnerHTML={{ __html: String(item.excerpt) }}
+            />
+          </li>
+        ))}
       </ul>
 
-      {totalPages > 1 && (
+      {excerptTotalPages > 1 && (
         <div className="flex items-center gap-2 mt-6">
           <button
             className="px-3 py-1 border rounded disabled:opacity-50"
-            disabled={!canPrev || loading}
-            onClick={() => fetchSearch(page - 1)}
+            disabled={excerptPage <= 1 || loading}
+            onClick={() => setPage(excerptPage - 1)}
           >
             Précédent
           </button>
-          <span className="text-sm">Page {page} / {totalPages}</span>
+          <span className="text-sm">Page {excerptPage} / {excerptTotalPages}</span>
           <button
             className="px-3 py-1 border rounded disabled:opacity-50"
-            disabled={!canNext || loading}
-            onClick={() => fetchSearch(page + 1)}
+            disabled={excerptPage >= excerptTotalPages || loading}
+            onClick={() => setPage(excerptPage + 1)}
           >
             Suivant
           </button>
