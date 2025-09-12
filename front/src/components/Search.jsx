@@ -51,7 +51,7 @@ export default function Search() {
     fetchSuggestions();
   }, [query]);
 
-    const fetchSearch = async (pageToLoad = 1, searchQuery) => {
+  const fetchSearch = async (pageToLoad = 1, searchQuery) => {
     const q = searchQuery ?? query;
     if (!q.trim()) return;
     // Reset previous results so a new search replaces instead of appearing appended
@@ -170,32 +170,45 @@ export default function Search() {
       <ul className="mt-4 space-y-3">
         {results.map((r, idx) => {
           const id = r.id || idx;
-          const title = r.fileName || "(Sans nom)";
-          const link = r.link || r.url || (r.filePath ? `/pdfs/${r.filePath}` : undefined);
-          const snippet = r.excerpts?.[0] || r.content;
-          return (
+          const fileName = r.originalname || "(Sans nom)";
+          const uploadedAt = r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : "";
+          const pageNum = r.pageNumber || 1;
+          const link = `http://${hostIp}:3000/api/pdfs/${id}/open#page=${pageNum}`;
+
+          // Pour chaque excerpt, on crée un item
+          return r.excerpts && r.excerpts.length > 0 ? (
+            r.excerpts.map((excerpt, exIdx) => (
+              <li key={`${id}-${exIdx}`} className="border rounded p-3 bg-white">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold truncate max-w-[60ch]" title={fileName}>{fileName}</div>
+                    <div className="text-xs text-gray-500">{uploadedAt}</div>
+                  </div>
+                  <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
+                    Ouvrir (page {pageNum})
+                  </a>
+                </div>
+                <p
+                  className="text-sm text-gray-700 mt-2"
+                  dangerouslySetInnerHTML={{ __html: String(excerpt) }}
+                />
+              </li>
+            ))
+          ) : (
             <li key={id} className="border rounded p-3 bg-white">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-semibold truncate max-w-[60ch]" title={title}>{title}</div>
-                  <div className="text-xs text-gray-500">{r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : ''}</div>
+                  <div className="font-semibold truncate max-w-[60ch]" title={fileName}>{fileName}</div>
+                  <div className="text-xs text-gray-500">{uploadedAt}</div>
                 </div>
-                {link && (
-                  <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
-                    Ouvrir
-                  </a>
-                )}
+                <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
+                  Ouvrir (page {pageNum})
+                </a>
               </div>
-              {snippet && (
-                <p
-                  className="text-sm text-gray-700 mt-2"
-                  dangerouslySetInnerHTML={{ __html: String(snippet) }}
-                />
-              )}
+              <div className="text-sm text-gray-700 mt-2">Aucun extrait</div>
             </li>
           );
         })}
-        {!loading && results.length === 0 && query && <div>Aucun résultat</div>}
       </ul>
 
       {totalPages > 1 && (

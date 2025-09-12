@@ -1,105 +1,105 @@
-  import 'dotenv/config';
-  import express from 'express';
-  import cors from 'cors';
-  import { connectDB } from './db.js';
-  import authRoutes from './routes/auth.js';
-  import multer from 'multer';
-  import fs from 'fs';
-  import path from 'path';
-  import pdfParse from 'pdf-parse/lib/pdf-parse.js';
-  import { Client } from '@elastic/elasticsearch';
-  import {
-    cacheMiddleware,
-    cacheJSONResponse,
-    bumpCacheVersion,
-    clearCache
-  } from './cache.js';
-  import { v4 as uuidv4 } from 'uuid';
-  import { logSearch, logUpload, logListDocs } from './utils/logger.js';
-  import sw from 'stopword';
-  import { auth } from './middleware/auth.js';
-  import { SearchLog } from './models/Logs.js';
-  import crypto from 'crypto';
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { connectDB } from './db.js';
+import authRoutes from './routes/auth.js';
+import multer from 'multer';
+import fs from 'fs';
+import path from 'path';
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import { Client } from '@elastic/elasticsearch';
+import {
+  cacheMiddleware,
+  cacheJSONResponse,
+  bumpCacheVersion,
+  clearCache
+} from './cache.js';
+import { v4 as uuidv4 } from 'uuid';
+import { logSearch, logUpload, logListDocs } from './utils/logger.js';
+import sw from 'stopword';
+import { auth } from './middleware/auth.js';
+import { SearchLog } from './models/Logs.js';
+import crypto from 'crypto';
 
-  const app = express();
-  app.use(cors());
-  app.use(express.json());
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-  // Mongo + auth
-  app.get('/', (req, res) =>
-    res.json({ ok: true, service: 'Service API' })
-  );
-  app.use('/api/auth', authRoutes);
+// Mongo + auth
+app.get('/', (req, res) =>
+  res.json({ ok: true, service: 'Service API' })
+);
+app.use('/api/auth', authRoutes);
 
-  // ---------- Elasticsearch Cluster Setup ----------
-  const client = new Client({
-    nodes: [
-      'http://10.104.126.159:9200',
-      'http://10.104.126.129:9200',
-      'http://10.104.126.60:9200',
-      'http://10.104.126.189:9200',
-      'http://10.104.126.67:9200'
-    ]
-  });
+// ---------- Elasticsearch Cluster Setup ----------
+const client = new Client({
+  nodes: [
+    'http://10.104.126.159:9200',
+    'http://10.104.126.129:9200',
+    'http://10.104.126.60:9200',
+    'http://10.104.126.189:9200',
+    'http://10.104.126.67:9200'
+  ]
+});
 
-  // Dossier de stockage permanent
-  const STORAGE_DIR = path.join(process.cwd(), 'stored_pdfs');
-  if (!fs.existsSync(STORAGE_DIR)) {
-    fs.mkdirSync(STORAGE_DIR);
+// Dossier de stockage permanent
+const STORAGE_DIR = path.join(process.cwd(), 'stored_pdfs');
+if (!fs.existsSync(STORAGE_DIR)) {
+  fs.mkdirSync(STORAGE_DIR);
+}
+
+const upload = multer({ dest: 'uploads/' });
+const stopwords = new Set(sw.fra);
+
+// ---------- Helpers ----------
+
+// fonction pour extraire les tags en enlevant les pronoms
+function extractTags(text, limit = 20) {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-zàâçéèêëîïôûùüÿñæœ\s]/gi, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !stopwords.has(w));
+
+  const freq = {};
+  for (const w of words) {
+    freq[w] = (freq[w] || 0) + 1;
   }
 
-  const upload = multer({ dest: 'uploads/' });
-  const stopwords = new Set(sw.fra);
+  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+  return sorted.slice(0, limit).map(([word]) => word);
+}
 
-  // ---------- Helpers ----------
+async function docExists({ filename, originalname, content, author, size, createdAt }) {
+  // Générer un hash du contenu texte
+  const contentHash = crypto
+    .createHash('sha256')
+    .update(content)
+    .digest('hex');
 
-  // fonction pour extraire les tags en enlevant les pronoms
-  function extractTags(text, limit = 20) {
-    const words = text
-      .toLowerCase()
-      .replace(/[^a-zàâçéèêëîïôûùüÿñæœ\s]/gi, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 2 && !stopwords.has(w));
-
-    const freq = {};
-    for (const w of words) {
-      freq[w] = (freq[w] || 0) + 1;
-    }
-
-    const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
-    return sorted.slice(0, limit).map(([word]) => word);
-  }
-
-  async function docExists({ filename, content, author, size, createdAt }) {
-    // Générer un hash du contenu texte
-    const contentHash = crypto
-      .createHash('sha256')
-      .update(content)
-      .digest('hex');
-
-    // Rechercher un doc avec le même hash
-    const result = await client.search({
-      index: 'pdfs',
-      size: 1,
-      query: {
-        bool: {
-          must: [
-            { term: { contentHash } },
-            { term: { 'author.keyword': author || 'unknown' } },
-            { term: { size } }
-          ],
-          must_not: [
-            // pas besoin de comparer le filename car nom unique
-          ]
-        }
+  // Rechercher un doc avec le même hash
+  const result = await client.search({
+    index: 'pdfs',
+    size: 1,
+    query: {
+      bool: {
+        must: [
+          { term: { contentHash } },
+          { term: { 'author.keyword': author || 'unknown' } },
+          { term: { size } }
+        ],
+        must_not: [
+          // pas besoin de comparer le filename car nom unique
+        ]
       }
-    });
-    if (result.hits.hits.length > 0) {
-      console.log('Doublon détecté via hash');
-      return true; // doublon exact
     }
-    return false;
+  });
+  if (result.hits.hits.length > 0) {
+    console.log('Doublon détecté via hash');
+    return true; // doublon exact
   }
+  return false;
+}
 
 // ---------- Upload PDF & Index ----------
 app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
@@ -130,6 +130,7 @@ app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
 
     const metadata = {
       filename: uniqueName,
+      originalname: req.file.originalname,
       content: pdfData.text,
       author: pdfData.info?.Author || 'unknown',
       size: req.file.size,
@@ -211,7 +212,7 @@ app.get(
 
       const result = await client.search({
         index: 'pdfs',
-        _source: ['filename', 'uploadedAt'],
+        _source: ['filename', 'originalname', 'uploadedAt'],
         from,
         size: pageSize,
         track_total_hits: true,
@@ -300,171 +301,171 @@ app.get(
   }
 );
 
-  // ---------- Lister tous les PDFs indexés ----------
-  app.get(
-    '/api/pdfs',
-    auth,
-    cacheMiddleware({ ttlSeconds: 84000 }),
-    async (req, res) => {
-      try {
-        const result = await client.search({
-          index: 'pdfs',
-          _source: ['filename', 'tags', 'uploadedAt'],
-          size: 1000,
-          query: { match_all: {} }
-        });
-
-        const body = result.hits.hits;
-
-        await logListDocs({
-          user: req.user.id,
-          results: body.length
-        });
-
-        return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
-      } catch (err) {
-        console.error(err);
-        res
-          .status(500)
-          .json({ error: 'Erreur lors de la récupération des PDFs' });
-      }
-    }
-  );
-
-  app.delete('/api/cache', auth, async (req, res) => {
+// ---------- Lister tous les PDFs indexés ----------
+app.get(
+  '/api/pdfs',
+  auth,
+  cacheMiddleware({ ttlSeconds: 84000 }),
+  async (req, res) => {
     try {
-      await clearCache();
-      res.json({ success: true, message: 'Cache vidé' });
-    } catch (err) {
-      res.status(500).json({
-        success: false,
-        error: `Impossible de vider le cache: ${err}`
+      const result = await client.search({
+        index: 'pdfs',
+        _source: ['filename', 'tags', 'uploadedAt'],
+        size: 1000,
+        query: { match_all: {} }
       });
-    }
-  });
 
-  // ---------- Télécharger un PDF ----------
-  app.get('/api/pdfs/:id/download', auth, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const result = await client.get({ index: 'pdfs', id });
+      const body = result.hits.hits;
 
-      const { filePath, filename } = result._source;
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Fichier introuvable' });
-      }
+      await logListDocs({
+        user: req.user.id,
+        results: body.length
+      });
 
-      res.download(filePath, filename);
+      return cacheJSONResponse(req, res, body, { ttlSeconds: 86400 });
     } catch (err) {
       console.error(err);
-      res.status(500).json({ error: 'Erreur lors du téléchargement du PDF' });
+      res
+        .status(500)
+        .json({ error: 'Erreur lors de la récupération des PDFs' });
     }
-  });
-
-  app.get('/api/pdfs/:id/open', auth, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const result = await client.get({ index: 'pdfs', id });
-
-      const { originalPath, filename } = result._source;
-      if (!fs.existsSync(originalPath)) {
-        return res.status(404).json({ error: 'Fichier introuvable' });
-      }
-
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-      fs.createReadStream(originalPath).pipe(res);
-    } catch (err) {
-      if (err.meta?.statusCode === 404) {
-        return res.status(404).json({ error: 'Document non trouvé' });
-      }
-      console.error(err);
-      res.status(500).json({ error: 'Erreur lors de l’ouverture du PDF' });
-    }
-  });
-
-  // GET /api/search/suggestions?q=mot
-  app.get('/api/pdfs/suggestions', auth, async (req, res) => {
-    try {
-      const user = req.user.id;
-      const { q = '' } = req.query;
-      if (!q || q.length < 1) return res.json([]);
-
-      // Cherche les requêtes de l'utilisateur commençant par q (insensible à la casse)
-      const suggestions = await SearchLog.find({
-        user,
-        query: { $regex: '^' + q, $options: 'i' }
-      })
-        .sort({ timestamp: -1 })
-        .limit(10)
-        .distinct('query');
-
-      res.json(suggestions);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Erreur lors de la récupération des suggestions de recherches' });
-    }
-  });
-
-    // ---------- Supprimer tous les PDFs, index et cache (sans auth) ----------
-  app.delete('/api/reset-all', async (req, res) => {
-    try {
-      const files = fs.readdirSync(STORAGE_DIR);
-      for (const file of files) {
-        fs.unlinkSync(path.join(STORAGE_DIR, file));
-      }
-
-      const indexExists = await client.indices.exists({ index: 'pdfs' });
-      if (indexExists) {
-        await client.indices.delete({ index: 'pdfs' });
-      }
-
-      await client.indices.create({ index: 'pdfs' });
-
-      await clearCache();
-
-      res.json({
-        success: true,
-        message: 'Tous les fichiers, index et cache ont été supprimés'
-      });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({
-        success: false,
-        error: `Erreur lors de la réinitialisation: ${err.message}`
-      });
-    }
-  });
-
-
-  // ---------- 404 & erreurs ----------
-  app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
-  app.use((err, req, res, next) => {
-    console.error(err);
-    res.status(500).json({ error: 'Erreur serveur' });
-  });
-
-  // ---------- Démarrage ----------
-  if (process.env.NODE_ENV !== 'test') {
-    const PORT = process.env.PORT || 3000;
-    connectDB(process.env.MONGODB_URI)
-      .then(() =>
-        app.listen(PORT, async () => {
-          console.log(`API sur http://localhost:${PORT}`);
-          try {
-            // Invalide les anciennes entrées de cache
-            await bumpCacheVersion();
-            console.log('Cache version bumped on startup');
-          } catch (e) {
-            console.warn('Unable to bump cache version on startup:', e);
-          }
-        })
-      )
-      .catch(err => {
-        console.error('Échec connexion BDD', err);
-        process.exit(1);
-      });
   }
+);
+
+app.delete('/api/cache', auth, async (req, res) => {
+  try {
+    await clearCache();
+    res.json({ success: true, message: 'Cache vidé' });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: `Impossible de vider le cache: ${err}`
+    });
+  }
+});
+
+// ---------- Télécharger un PDF ----------
+app.get('/api/pdfs/:id/download', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await client.get({ index: 'pdfs', id });
+
+    const { filePath, filename } = result._source;
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Fichier introuvable' });
+    }
+
+    res.download(filePath, filename);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du téléchargement du PDF' });
+  }
+});
+
+app.get('/api/pdfs/:id/open', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await client.get({ index: 'pdfs', id });
+
+    const { originalPath, filename } = result._source;
+    if (!fs.existsSync(originalPath)) {
+      return res.status(404).json({ error: 'Fichier introuvable' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    fs.createReadStream(originalPath).pipe(res);
+  } catch (err) {
+    if (err.meta?.statusCode === 404) {
+      return res.status(404).json({ error: 'Document non trouvé' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de l’ouverture du PDF' });
+  }
+});
+
+// GET /api/search/suggestions?q=mot
+app.get('/api/pdfs/suggestions', auth, async (req, res) => {
+  try {
+    const user = req.user.id;
+    const { q = '' } = req.query;
+    if (!q || q.length < 1) return res.json([]);
+
+    // Cherche les requêtes de l'utilisateur commençant par q (insensible à la casse)
+    const suggestions = await SearchLog.find({
+      user,
+      query: { $regex: '^' + q, $options: 'i' }
+    })
+      .sort({ timestamp: -1 })
+      .limit(10)
+      .distinct('query');
+
+    res.json(suggestions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des suggestions de recherches' });
+  }
+});
+
+// ---------- Supprimer tous les PDFs, index et cache (sans auth) ----------
+app.delete('/api/reset-all', async (req, res) => {
+  try {
+    const files = fs.readdirSync(STORAGE_DIR);
+    for (const file of files) {
+      fs.unlinkSync(path.join(STORAGE_DIR, file));
+    }
+
+    const indexExists = await client.indices.exists({ index: 'pdfs' });
+    if (indexExists) {
+      await client.indices.delete({ index: 'pdfs' });
+    }
+
+    await client.indices.create({ index: 'pdfs' });
+
+    await clearCache();
+
+    res.json({
+      success: true,
+      message: 'Tous les fichiers, index et cache ont été supprimés'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      error: `Erreur lors de la réinitialisation: ${err.message}`
+    });
+  }
+});
 
 
-  export default app;
+// ---------- 404 & erreurs ----------
+app.use((req, res) => res.status(404).json({ error: 'Route introuvable' }));
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Erreur serveur' });
+});
+
+// ---------- Démarrage ----------
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = process.env.PORT || 3000;
+  connectDB(process.env.MONGODB_URI)
+    .then(() =>
+      app.listen(PORT, async () => {
+        console.log(`API sur http://localhost:${PORT}`);
+        try {
+          // Invalide les anciennes entrées de cache
+          await bumpCacheVersion();
+          console.log('Cache version bumped on startup');
+        } catch (e) {
+          console.warn('Unable to bump cache version on startup:', e);
+        }
+      })
+    )
+    .catch(err => {
+      console.error('Échec connexion BDD', err);
+      process.exit(1);
+    });
+}
+
+
+export default app;
