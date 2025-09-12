@@ -66,7 +66,8 @@ function AppInner() {
           headers: { Authorization: `Bearer ${token}` }
         });
       }
-    } catch (e) {
+    } catch (err) {
+      console.error(err);
     } finally {
       localStorage.removeItem("token");
       localStorage.removeItem("user");

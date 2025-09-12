@@ -245,7 +245,7 @@ test('GET /api/pdfs/search retourne items formatés', async () => {
       id: 'id1',
       originalName: 'f1.pdf',
       uploadedAt: '2024-02-01',
-      pageNumber: 3,
+      snippets: [{ pageNumber: 3, snippet: 'foo <mark>bar</mark> baz' }],
     }),
   );
 });

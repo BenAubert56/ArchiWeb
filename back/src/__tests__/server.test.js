@@ -172,7 +172,18 @@ test('GET /api/pdfs/search retourne items formatés', async () => {
         {
           _id: 'id1',
           _source: { filename: 'f1.pdf', uploadedAt: '2024-02-01' },
-          highlight: { content: ['foo <mark>bar</mark> baz'] },
+          inner_hits: {
+            pages_matching: {
+              hits: {
+                hits: [
+                  {
+                    _source: { pageNumber: 5 },
+                    highlight: { 'pages.text': ['foo <mark>bar</mark> baz'] },
+                  },
+                ],
+              },
+            },
+          },
         },
       ],
     },
@@ -183,7 +194,12 @@ test('GET /api/pdfs/search retourne items formatés', async () => {
   expect(res.status).toBe(200);
   expect(res.body.total).toBe(42);
   expect(res.body.hits[0]).toEqual(
-    expect.objectContaining({ id: 'id1', fileName: 'f1.pdf', uploadedAt: '2024-02-01' }),
+    expect.objectContaining({
+      id: 'id1',
+      fileName: 'f1.pdf',
+      uploadedAt: '2024-02-01',
+      snippets: [{ pageNumber: 5, snippet: 'foo <mark>bar</mark> baz' }],
+    }),
   );
 });
 

@@ -209,16 +209,17 @@ app.get('/api/pdfs/search', auth, async (req, res) => {
       const fileName = src.filename ?? src.originalName ?? null; // expose les deux
       const uploadedAt = src.uploadedAt ?? null;
 
-      let pageNumber = null;
-      let snippet = '';
-
       const inner = hit.inner_hits?.pages_matching?.hits?.hits ?? [];
-      if (inner.length > 0) {
-        pageNumber = inner[0]._source?.pageNumber ?? null;
-        snippet = inner[0].highlight?.['pages.text']?.[0] ?? '';
+      const snippets = [];
+      for (const innerHit of inner) {
+        const pageNumber = innerHit._source?.pageNumber ?? null;
+        const highlights = innerHit.highlight?.['pages.text'] ?? [];
+        for (const fragment of highlights) {
+          snippets.push({ pageNumber, snippet: fragment });
+        }
       }
 
-      items.push({ id, fileName, originalName, uploadedAt, snippet, pageNumber });
+      items.push({ id, fileName, originalName, uploadedAt, snippets });
     }
 
     const total =

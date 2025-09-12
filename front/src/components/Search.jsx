@@ -83,7 +83,7 @@ export default function Search() {
         // prefer server-reported page if present
         setPage(Number(data?.page ?? pageToLoad));
       }
-    } catch (e) {
+    } catch {
       setError("Erreur lors de la recherche");
     } finally {
       setLoading(false);
@@ -163,7 +163,7 @@ export default function Search() {
 
       {(total > 0 || totalPages > 0) && (
         <div className="mt-4 text-sm text-gray-700">
-          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''}
+          {total} résultat{total > 1 ? 's' : ''} — Page {page}{Number.isFinite(totalPages) && totalPages > 0 ? `/${totalPages}` : ''} — {duration} ms
         </div>
       )}
 
@@ -171,26 +171,32 @@ export default function Search() {
         {results.map((r, idx) => {
           const id = r.id || idx;
           const title = r.originalName || "(Sans nom)";
-          const pageNum = r.pageNumber || 1;
-          const link = `/api/pdfs/${id}/open#page=${pageNum}`;
+          const snippets = Array.isArray(r.snippets) ? r.snippets : [];
           return (
             <li key={id} className="border rounded p-3 bg-white">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold truncate max-w-[60ch]" title={title}>{title}</div>
-                  <div className="text-xs text-gray-500">
-                    {r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : ""}
-                  </div>
-                </div>
-                <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
-                  Ouvrir (page {pageNum})
-                </a>
+              <div className="font-semibold truncate max-w-[60ch]" title={title}>{title}</div>
+              <div className="text-xs text-gray-500">
+                {r.uploadedAt ? new Date(r.uploadedAt).toLocaleString() : ""}
               </div>
-              {r.snippet && (
-                <p
-                  className="text-sm text-gray-700 mt-2"
-                  dangerouslySetInnerHTML={{ __html: String(r.snippet) }}
-                />
+              {snippets.length > 0 && (
+                <table className="mt-2 w-full text-sm">
+                  <tbody>
+                    {snippets.map((s, i) => {
+                      const page = s.pageNumber || 1;
+                      const link = `/api/pdfs/${id}/open#page=${page}`;
+                      return (
+                        <tr key={i} className="border-t">
+                          <td className="pr-2 whitespace-nowrap align-top">
+                            <a className="text-blue-600 underline" href={link} target="_blank" rel="noreferrer">
+                              Page {page}
+                            </a>
+                          </td>
+                          <td className="text-gray-700" dangerouslySetInnerHTML={{ __html: String(s.snippet) }} />
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               )}
             </li>
           );
