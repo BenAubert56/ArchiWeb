@@ -1,4 +1,10 @@
 # Projet
+## Équipe
+- AUBERT BENJAMIN
+- BEDET VALENTIN
+- LAVOUTE ANTHONY
+- LHUISSIER KYLIAN
+- PIGEON HUGO
 
 ## Prérequis
 - [Node.js](https://nodejs.org) (version 18+ recommandée)
