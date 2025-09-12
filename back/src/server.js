@@ -102,10 +102,8 @@
   }
 
 // ---------- Upload PDF & Index ----------
-
 app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
   try {
-    // Vérifier que multer a reçu le fichier
     if (!req.file) {
       console.warn('Aucun fichier reçu !');
       return res.status(400).json({ error: 'Aucun fichier reçu' });
@@ -114,13 +112,22 @@ app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
     const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
     const storedFilePath = path.join(STORAGE_DIR, uniqueName);
 
-    fs.renameSync(req.file.path, storedFilePath);
+    // 🔹 Copier le fichier
+    const readStream = fs.createReadStream(req.file.path);
+    const writeStream = fs.createWriteStream(storedFilePath);
+
+    await new Promise((resolve, reject) => {
+      readStream.pipe(writeStream)
+        .on('finish', resolve)
+        .on('error', reject);
+    });
+
+    // 🔹 Supprimer l'ancien fichier temporaire
+    fs.unlinkSync(req.file.path);
 
     const dataBuffer = fs.readFileSync(storedFilePath);
-
     const pdfData = await pdfParse(dataBuffer);
 
-    // Métadonnées + hash
     const metadata = {
       filename: uniqueName,
       content: pdfData.text,
@@ -163,7 +170,6 @@ app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
     });
 
     await client.indices.refresh({ index: 'pdfs' });
-
     await bumpCacheVersion();
 
     res.json({
@@ -172,6 +178,7 @@ app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
       doc
     });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: "Erreur lors de l'upload PDF" });
   }
 });
