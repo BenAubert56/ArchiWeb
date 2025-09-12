@@ -35,7 +35,6 @@ services:
       - ES_NODES=http://elasticsearch:9200
     depends_on:
       - mongo
-      - elasticsearch
       - redis
     tty: true
 
@@ -52,30 +51,30 @@ services:
     volumes:
       - ./mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
-    container_name: es-node3
-    environment:
-      - cluster.name=pdf-cluster
-      - node.name=node3
-      - network.host=0.0.0.0
-      - transport.publish_host=10.104.126.60
-      - http.port=9200
-      - transport.port=9300
-      - discovery.seed_hosts=10.104.126.159,10.104.126.129,10.104.126.60,10.104.126.189,10.104.126.67
-      - xpack.security.enabled=false
-      - bootstrap.memory_lock=true
-      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
-      - cluster.initial_master_nodes=node1,node2,node3,node4,node5
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-    ports:
-      - 9200:9200
-      - 9300:9300
-    volumes:
-      - ./data/node3:/usr/share/elasticsearch/data
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+  #   container_name: es-node3
+  #   environment:
+  #     - cluster.name=pdf-cluster
+  #     - node.name=node3
+  #     - network.host=0.0.0.0
+  #     - transport.publish_host=10.104.126.60
+  #     - http.port=9200
+  #     - transport.port=9300
+  #     - discovery.seed_hosts=10.104.126.159,10.104.126.129,10.104.126.60,10.104.126.189,10.104.126.67
+  #     - xpack.security.enabled=false
+  #     - bootstrap.memory_lock=true
+  #     - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+  #     - cluster.initial_master_nodes=node1,node2,node3,node4,node5
+  #   ulimits:
+  #     memlock:
+  #       soft: -1
+  #       hard: -1
+  #   ports:
+  #     - 9200:9200
+  #     - 9300:9300
+  #   volumes:
+  #     - ./data/node3:/usr/share/elasticsearch/data
 
   redis:
     image: redis:7

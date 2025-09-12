@@ -101,162 +101,197 @@
     return false;
   }
 
-  // ---------- Upload PDF & Index ----------
-  app.post(
-    '/api/pdfs/upload',
-    auth,
-    upload.single('pdf'),
-    async (req, res) => {
-      try {
-        const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
-        const storedFilePath = path.join(STORAGE_DIR, uniqueName);
-        fs.renameSync(req.file.path, storedFilePath);
+// ---------- Upload PDF & Index ----------
 
-        const dataBuffer = fs.readFileSync(storedFilePath);
-        const pdfData = await pdfParse(dataBuffer);
-
-      // Métadonnées + hash
-      const metadata = {
-        filename: uniqueName,
-        content: pdfData.text,
-        author: pdfData.info?.Author || 'unknown',
-        size: req.file.size,
-        createdAt: pdfData.info?.CreationDate || null
-      };
-
-      const exists = await docExists(metadata);
-      if (exists) {
-        fs.unlinkSync(storedFilePath); // supprimer car doublon
-        return res.status(409).json({ error: 'Fichier déjà indexé' });
-      }
-
-      const contentHash = crypto
-        .createHash('sha256')
-        .update(pdfData.text)
-        .digest('hex');
-
-      const tags = extractTags(pdfData.text);
-
-      const doc = {
-        ...metadata,
-        contentHash,
-        tags,
-        uploadedAt: new Date(),
-        originalPath: storedFilePath
-      };
-
-        const response = await client.index({
-          index: 'pdfs',
-          document: doc
-        });
-
-      await logUpload({
-        user: req.user?.id || 'anonymous',
-        filename: uniqueName,
-        tags,
-        size: req.file.size
-      });
-
-      await client.indices.refresh({ index: 'pdfs' });
-      await bumpCacheVersion();
-
-        res.json({
-          message: 'PDF indexé avec succès',
-          id: response._id,
-          doc
-        });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Erreur lors de l'upload PDF" });
-      }
+app.post('/api/pdfs/upload', auth, upload.single('pdf'), async (req, res) => {
+  try {
+    // Vérifier que multer a reçu le fichier
+    if (!req.file) {
+      console.warn('Aucun fichier reçu !');
+      return res.status(400).json({ error: 'Aucun fichier reçu' });
     }
-  );
 
-  // ---------- Recherche PDF ----------
-  app.get(
-    '/api/pdfs/search',
-    auth,
-    cacheMiddleware({ ttlSeconds: 86400 }),
-    async (req, res) => {
-      const start = Date.now();
-      try {
-        const { q = '', page: pageStr } = req.query;
-        const query = String(q || '').trim();
-        const FIXED_PAGE_SIZE = 20;
-        if (!query) {
-          return cacheJSONResponse(req, res, { hits: [], total: 0, page: 1, pageSize: FIXED_PAGE_SIZE, totalPages: 0, duration: 0 }, { ttlSeconds: 60 });
-        }
+    const uniqueName = `${Date.now()}-${uuidv4()}-${req.file.originalname}`;
+    const storedFilePath = path.join(STORAGE_DIR, uniqueName);
 
-        // Pagination params (document-level)
-        const page = Math.max(1, Number.parseInt(pageStr) || 1);
-        const pageSize = FIXED_PAGE_SIZE;
-        const from = (page - 1) * pageSize;
+    fs.renameSync(req.file.path, storedFilePath);
 
-        const result = await client.search({
-          index: 'pdfs',
-          _source: ['filename', 'uploadedAt'],
-          from,
-          size: pageSize,
-          track_total_hits: true,
-          query: {
-            bool: {
-              should: [
-                { term: { 'filename.keyword': { value: q, boost: 3 } } },
-                { terms: { tags: q.split(' '), boost: 2 } },
-                {
-                  multi_match: {
-                    query: q,
-                    fields: ['content'],
-                    type: 'best_fields'
-                  }
+    const dataBuffer = fs.readFileSync(storedFilePath);
+
+    const pdfData = await pdfParse(dataBuffer);
+
+    // Métadonnées + hash
+    const metadata = {
+      filename: uniqueName,
+      content: pdfData.text,
+      author: pdfData.info?.Author || 'unknown',
+      size: req.file.size,
+      createdAt: pdfData.info?.CreationDate || null
+    };
+
+    const exists = await docExists(metadata);
+    if (exists) {
+      fs.unlinkSync(storedFilePath);
+      return res.status(409).json({ error: 'Fichier déjà indexé' });
+    }
+
+    const contentHash = crypto
+      .createHash('sha256')
+      .update(pdfData.text)
+      .digest('hex');
+
+    const tags = extractTags(pdfData.text);
+
+    const doc = {
+      ...metadata,
+      contentHash,
+      tags,
+      uploadedAt: new Date(),
+      originalPath: storedFilePath
+    };
+
+    const response = await client.index({
+      index: 'pdfs',
+      document: doc
+    });
+
+    await logUpload({
+      user: req.user?.id || 'anonymous',
+      filename: uniqueName,
+      tags,
+      size: req.file.size
+    });
+
+    await client.indices.refresh({ index: 'pdfs' });
+
+    await bumpCacheVersion();
+
+    res.json({
+      message: 'PDF indexé avec succès',
+      id: response._id,
+      doc
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Erreur lors de l'upload PDF" });
+  }
+});
+
+// ---------- Recherche PDF ----------
+app.get(
+  '/api/pdfs/search',
+  auth,
+  cacheMiddleware({ ttlSeconds: 86400 }),
+  async (req, res) => {
+    const start = Date.now();
+    try {
+      const { q = '', page: pageStr } = req.query;
+      const query = String(q || '').trim();
+      const FIXED_PAGE_SIZE = 20;
+
+      if (!query) {
+        return cacheJSONResponse(
+          req,
+          res,
+          { hits: [], total: 0, page: 1, pageSize: FIXED_PAGE_SIZE, totalPages: 0, duration: 0 },
+          { ttlSeconds: 60 }
+        );
+      }
+
+      // Pagination params (document-level)
+      const page = Math.max(1, Number.parseInt(pageStr) || 1);
+      const pageSize = FIXED_PAGE_SIZE;
+      const from = (page - 1) * pageSize;
+
+      const result = await client.search({
+        index: 'pdfs',
+        _source: ['filename', 'uploadedAt'],
+        from,
+        size: pageSize,
+        track_total_hits: true,
+        query: {
+          bool: {
+            should: [
+              { term: { 'filename.keyword': { value: q, boost: 3 } } },
+              { terms: { tags: q.split(' '), boost: 2 } },
+              {
+                multi_match: {
+                  query: q,
+                  fields: ['content'],
+                  type: 'best_fields'
                 }
-              ]
-            }
-          },
-          highlight: {
-            fields: {
-              content: {
-                fragment_size: 140,
-                number_of_fragments: 3,
-                pre_tags: ['<mark>'],
-                post_tags: ['</mark>'],
-                fragmenter: 'simple'
               }
+            ]
+          }
+        },
+        highlight: {
+          fields: {
+            content: {
+              fragment_size: 50,
+              number_of_fragments: 2,
+              pre_tags: ['<mark>'],
+              post_tags: ['</mark>'],
+              fragmenter: 'simple'
             }
           }
-        });
+        }
+      });
 
-        const items = [];
-        for (const hit of result.hits.hits) {
-          const id = hit._id;
-          const src = hit._source || {};
-          const filename = src.filename;
-          const uploadedAt = src.uploadedAt;
-          const contentFragments = (hit.highlight && hit.highlight.content) ? hit.highlight.content : [];
-          const firstFrag = contentFragments[0] ?? '';
-          const cleanFrag = String(firstFrag).replace(/-\s*/g, '').replace(/\s+/g, ' ').trim();
-          items.push({ id, fileName: filename, uploadedAt, content: cleanFrag });
+      // Regrouper par PDF
+      const itemsMap = new Map();
+
+      for (const hit of result.hits.hits) {
+        const id = hit._id;
+        const src = hit._source || {};
+        const filename = src.filename;
+        const uploadedAt = src.uploadedAt;
+
+        const fragments = (hit.highlight?.content || []).map(f =>
+          String(f).replace(/-\s*/g, '').replace(/\s+/g, ' ').trim()
+        );
+
+        if (!itemsMap.has(id)) {
+          itemsMap.set(id, {
+            id,
+            fileName: filename,
+            uploadedAt,
+            excerpts: []
+          });
         }
 
-        const total = typeof result.hits.total === 'number' ? result.hits.total : (result.hits.total?.value ?? items.length);
-        const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
-
-        const duration = Date.now() - start;
-
-        await logSearch({
-          user: req.user.id,
-          query: q,
-          results: items.length,
-          duration
-        });
-
-        return cacheJSONResponse(req, res, { hits: items, total, page, pageSize, totalPages, duration }, { ttlSeconds: 86400 });
-      } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
+        const item = itemsMap.get(id);
+        item.excerpts.push(...fragments);
+        item.excerpts = [...new Set(item.excerpts)]; // éviter doublons
       }
+
+      const items = Array.from(itemsMap.values());
+
+      const total =
+        typeof result.hits.total === 'number'
+          ? result.hits.total
+          : result.hits.total?.value ?? items.length;
+
+      const totalPages = Math.max(1, Math.ceil((total || 0) / pageSize));
+      const duration = Date.now() - start;
+
+      await logSearch({
+        user: req.user.id,
+        query: q,
+        results: items.length,
+        duration
+      });
+
+      return cacheJSONResponse(
+        req,
+        res,
+        { hits: items, total, page, pageSize, totalPages, duration },
+        { ttlSeconds: 86400 }
+      );
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Erreur lors de la recherche PDF' });
     }
-  );
+  }
+);
 
   // ---------- Lister tous les PDFs indexés ----------
   app.get(
